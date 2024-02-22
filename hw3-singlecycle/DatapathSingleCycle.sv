@@ -10,21 +10,43 @@
 `include "../hw2b/cla.sv"
 
 module RegFile (
-    input logic [4:0] rd,
-    input logic [`REG_SIZE] rd_data,
-    input logic [4:0] rs1,
-    output logic [`REG_SIZE] rs1_data,
-    input logic [4:0] rs2,
-    output logic [`REG_SIZE] rs2_data,
+    input logic [4:0] rd,  //reg number
+    input logic [`REG_SIZE] rd_data,  //to write
+    input logic [4:0] rs1,  // which to read from
+    output logic [`REG_SIZE] rs1_data,  // data to read
+    input logic [4:0] rs2,  //which to read from
+    output logic [`REG_SIZE] rs2_data,  // to read
 
-    input logic clk,
-    input logic we,
-    input logic rst
+    input logic clk,  //clock
+    input logic we,   //if writing is enabled
+    input logic rst   //reset to known state
 );
   localparam int NumRegs = 32;
-  logic [`REG_SIZE] regs[NumRegs];
+  logic [`REG_SIZE] regs[NumRegs];  //these are the actual registers! nice!!!
+
 
   // TODO: your code here
+  assign regs[0]  = 32'd0;  //x0 is always 0
+  assign rs1_data = regs[rs1];  //just easily index in and give that as the result
+  assign rs2_data = regs[rs2];  //same as above
+
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      for (int i = 1; i < NumRegs; i = i + 1) begin
+        regs[i] <= 32'd0;
+      end
+    end else begin
+      for (int i = 1; i < NumRegs; i = i + 1) begin
+        if (we && rd == i[4:0]) begin
+          regs[i] <= rd_data;
+        end
+      end
+    end
+  end
+  //add the other registers using genvar and for loop
+
+  //reading
+  //include a mux for the reading 
 
 endmodule
 
@@ -68,7 +90,9 @@ module DatapathSingleCycle (
 
   // J - unconditional jumps
   wire [20:0] imm_j;
-  assign {imm_j[20], imm_j[10:1], imm_j[11], imm_j[19:12], imm_j[0]} = {insn_from_imem[31:12], 1'b0};
+  assign {imm_j[20], imm_j[10:1], imm_j[11], imm_j[19:12], imm_j[0]} = {
+    insn_from_imem[31:12], 1'b0
+  };
 
   wire [`REG_SIZE] imm_i_sext = {{20{imm_i[11]}}, imm_i[11:0]};
   wire [`REG_SIZE] imm_s_sext = {{20{imm_s[11]}}, imm_s[11:0]};
@@ -305,16 +329,16 @@ module RiscvProcessor (
   MemorySingleCycle #(
       .NUM_WORDS(8192)
   ) mem (
-      .rst      (rst),
-      .clock_mem (clock_mem),
+      .rst                (rst),
+      .clock_mem          (clock_mem),
       // imem is read-only
-      .pc_to_imem(pc_to_imem),
-      .insn_from_imem(insn_from_imem),
+      .pc_to_imem         (pc_to_imem),
+      .insn_from_imem     (insn_from_imem),
       // dmem is read-write
-      .addr_to_dmem(mem_data_addr),
+      .addr_to_dmem       (mem_data_addr),
       .load_data_from_dmem(mem_data_loaded_value),
       .store_data_to_dmem (mem_data_to_write),
-      .store_we_to_dmem  (mem_data_we)
+      .store_we_to_dmem   (mem_data_we)
   );
 
   DatapathSingleCycle datapath (
