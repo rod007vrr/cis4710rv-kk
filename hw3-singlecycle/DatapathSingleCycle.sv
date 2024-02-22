@@ -26,10 +26,10 @@ module RegFile (
 
 
   // TODO: your code here
+
   assign regs[0]  = 32'd0;  //x0 is always 0
   assign rs1_data = regs[rs1];  //just easily index in and give that as the result
   assign rs2_data = regs[rs2];  //same as above
-
   always_ff @(posedge clk) begin
     if (rst) begin
       for (int i = 1; i < NumRegs; i = i + 1) begin
@@ -210,31 +210,81 @@ module DatapathSingleCycle (
     end
   end
 
+
+  logic illegal_insn;
+
   logic [4:0] rf_rd;
   logic [`REG_SIZE] rf_rd_data;
+  logic [4:0] rf_rs1;
+  logic [`REG_SIZE] rf_rs1_data;
+  logic [4:0] rf_rs2;
+  logic [`REG_SIZE] rf_rs2_data;
+
   logic rf_we;
 
   RegFile rf (
       .rd(rf_rd),
       .rd_data(rf_rd_data),
-      .rs1(),
-      .rs1_data(),
-      .rs2(),
-      .rs2_data(),
+      .rs1(rf_rs1),
+      .rs1_data(rf_rs1_data),
+      .rs2(rf_rs2),
+      .rs2_data(rf_rs2_data),
       .clk(clk),
       .rst(rst),
       .we(rf_we)
   );
 
-  logic illegal_insn;
+  logic [31:0] cla_a;
+  logic [31:0] cla_b;
+  logic cla_cin;
+  logic [31:0] cla_sum;
+
+  cla cla_inst (
+      .a  (cla_a),
+      .b  (cla_b),
+      .cin(cla_cin),
+      .sum(cla_sum)
+  );
 
   always_comb begin
     illegal_insn = 1'b0;
+
+    //default vals
+    halt = 1'b0;
+    rf_we = 1'b0;
+    rf_rd = '0;
+    rf_rd_data = '0;
+    pcNext = pcCurrent + 32'd4;
+    rf_rs1 = insn_rs1;
+    rf_rs2 = insn_rs2;
+    cla_a = 32'd0;
+    cla_b = 32'd0;
+    cla_cin = 1'd0;
     case (insn_opcode)
       OpLui: begin
         rf_rd = insn_from_imem[11:7];
         rf_rd_data = {insn_from_imem[31:12], 12'b0};
         rf_we = 1'b1;
+      end
+      OpRegImm: begin
+        case (insn_funct3)
+          3'b000: begin  //addi
+            //rd = rs1 + se(imm12)
+            rf_we = 1'b1;
+            rf_rd = insn_rd;
+
+            rf_rs1 = insn_rs1;
+            cla_a = rf_rs1_data;
+            cla_b = imm_i_sext;
+            cla_cin = 1'b0;
+            rf_rd_data = cla_sum;
+
+          end
+
+          default: begin
+            illegal_insn = 1'b1;
+          end
+        endcase
       end
       default: begin
         illegal_insn = 1'b1;
