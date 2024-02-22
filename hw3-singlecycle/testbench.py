@@ -347,22 +347,22 @@ RV_TEST_BINARIES = [
     RISCV_TESTS_PATH / 'rv32ui-p-lui',
     
     RISCV_TESTS_PATH / 'rv32ui-p-and', # 3
-    RISCV_TESTS_PATH / 'rv32ui-p-or',
-    RISCV_TESTS_PATH / 'rv32ui-p-xor',
-    RISCV_TESTS_PATH / 'rv32ui-p-sll',
-    RISCV_TESTS_PATH / 'rv32ui-p-sra',
-    RISCV_TESTS_PATH / 'rv32ui-p-srl',
+    RISCV_TESTS_PATH / 'rv32ui-p-or', #4
+    RISCV_TESTS_PATH / 'rv32ui-p-xor', #5
+    RISCV_TESTS_PATH / 'rv32ui-p-sll', #6
+    RISCV_TESTS_PATH / 'rv32ui-p-sra', #7 
+    RISCV_TESTS_PATH / 'rv32ui-p-srl', #8
     RISCV_TESTS_PATH / 'rv32ui-p-slt',
     RISCV_TESTS_PATH / 'rv32ui-p-add',
-    RISCV_TESTS_PATH / 'rv32ui-p-sub',
+    RISCV_TESTS_PATH / 'rv32ui-p-sub', #11
     
     RISCV_TESTS_PATH / 'rv32ui-p-andi', # 12
-    RISCV_TESTS_PATH / 'rv32ui-p-ori',
-    RISCV_TESTS_PATH / 'rv32ui-p-slli',
-    RISCV_TESTS_PATH / 'rv32ui-p-srai',
-    RISCV_TESTS_PATH / 'rv32ui-p-srli',
-    RISCV_TESTS_PATH / 'rv32ui-p-xori',
-    RISCV_TESTS_PATH / 'rv32ui-p-slti',
+    RISCV_TESTS_PATH / 'rv32ui-p-ori', #13
+    RISCV_TESTS_PATH / 'rv32ui-p-slli', #14
+    RISCV_TESTS_PATH / 'rv32ui-p-srai', #15
+    RISCV_TESTS_PATH / 'rv32ui-p-srli', #16
+    RISCV_TESTS_PATH / 'rv32ui-p-xori', #17
+    RISCV_TESTS_PATH / 'rv32ui-p-slti', #18 
     RISCV_TESTS_PATH / 'rv32ui-p-sltiu',
     RISCV_TESTS_PATH / 'rv32ui-p-sltu',
     RISCV_TESTS_PATH / 'rv32ui-p-addi',

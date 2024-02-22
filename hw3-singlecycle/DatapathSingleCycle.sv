@@ -267,25 +267,205 @@ module DatapathSingleCycle (
         rf_we = 1'b1;
       end
       OpRegImm: begin
-        case (insn_funct3)
-          3'b000: begin  //addi
-            //rd = rs1 + se(imm12)
-            rf_we = 1'b1;
-            rf_rd = insn_rd;
+        if (insn_addi) begin
+          //rd = rs1 + se(imm12)
+          rf_we = 1'b1;
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
 
-            rf_rs1 = insn_rs1;
-            cla_a = rf_rs1_data;
-            cla_b = imm_i_sext;
-            cla_cin = 1'b0;
-            rf_rd_data = cla_sum;
-
+          cla_a = rf_rs1_data;
+          cla_b = imm_i_sext;
+          cla_cin = 1'b0;
+          rf_rd_data = cla_sum;
+        end else if (insn_slti) begin
+          //rd = rs1 <sign se(imm12) ? 1 : 0
+          rf_rd  = insn_rd;
+          rf_rs1 = insn_rs1;
+          if ($signed(rf_rs1_data) < $signed(imm_i_sext)) begin
+            rf_rd_data = 32'b1;
+          end else begin
+            rf_rd_data = 32'b0;
           end
+          rf_we = 1'b1;
 
-          default: begin
-            illegal_insn = 1'b1;
+
+          // rf_rd  = insn_rd;
+          // rf_rs1 = insn_rs1;
+          // if ($signed(rf_rs1_data) < imm_i_sext) begin
+          //   rf_rd_data = 32'b1;
+          // end else begin
+          //   rf_rd_data = 32'b0;
+          // end
+          // rf_we = 1'b1;
+        end else if (insn_sltiu) begin
+          rf_rd  = insn_rd;
+          rf_rs1 = insn_rs1;
+          if (rf_rs1_data < imm_i_sext) begin
+            rf_rd_data = 32'b1;
+          end else begin
+            rf_rd_data = 32'b0;
           end
-        endcase
+          rf_we = 1'b1;
+        end else if (insn_xori) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rd_data = rf_rs1_data ^ imm_i_sext;
+          rf_we = 1'b1;
+        end else if (insn_ori) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rd_data = rf_rs1_data | imm_i_sext;
+          rf_we = 1'b1;
+        end else if (insn_andi) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rd_data = rf_rs1_data & imm_i_sext;
+          rf_we = 1'b1;
+        end else if (insn_slli) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rd_data = rf_rs1_data << imm_shamt;
+          rf_we = 1'b1;
+        end else if (insn_srli) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rd_data = rf_rs1_data >> imm_shamt;
+          rf_we = 1'b1;
+        end else if (insn_srai) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rd_data = $signed(rf_rs1_data) >>> imm_shamt;
+          rf_we = 1'b1;
+        end else begin
+          illegal_insn = 1'b1;
+        end
       end
+      OpRegReg: begin
+        if (insn_add) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          cla_a = rf_rs1_data;
+          cla_b = rf_rs2_data;
+          cla_cin = 1'b0;
+          rf_rd_data = cla_sum;
+          rf_we = 1'b1;
+        end else if (insn_sub) begin
+          //rd = rs1 - rs2
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          cla_a = rf_rs1_data;
+          cla_b = ~rf_rs2_data;
+          cla_cin = 1'b1;
+          rf_rd_data = cla_sum;
+          rf_we = 1'b1;
+
+          // rf_rd = insn_rd;
+          // rf_rs1 = insn_rs1;
+          // rf_rs2 = insn_rs2;
+          // cla_a = rf_rs1_data;
+          // cla_b = ~rf_rs2_data + 1;
+          // cla_cin = 1'b1;
+          // rf_rd_data = cla_sum;
+          // rf_we = 1'b1;
+        end else if (insn_sll) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          rf_rd_data = rf_rs1_data << (rf_rs2_data[4:0]);
+          rf_we = 1'b1;
+        end else if (insn_slt) begin
+          rf_rd  = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          if (signed'(rf_rs1_data) < signed'(rf_rs2_data)) begin
+            rf_rd_data = 32'b1;
+          end else begin
+            rf_rd_data = 32'b0;
+          end
+          rf_we = 1'b1;
+        end else if (insn_sltu) begin
+          rf_rd  = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          if (rf_rs1_data < rf_rs2_data) begin
+            rf_rd_data = 32'b1;
+          end else begin
+            rf_rd_data = 32'b0;
+          end
+          rf_we = 1'b1;
+        end else if (insn_xor) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          rf_rd_data = rf_rs1_data ^ rf_rs2_data;
+          rf_we = 1'b1;
+        end else if (insn_srl) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          rf_rd_data = rf_rs1_data >> rf_rs2_data[4:0];
+          rf_we = 1'b1;
+        end else if (insn_sra) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          rf_rd_data = $signed(rf_rs1_data) >>> rf_rs2_data[4:0];
+          rf_we = 1'b1;
+        end else if (insn_or) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          rf_rd_data = rf_rs1_data | rf_rs2_data;
+          rf_we = 1'b1;
+        end else if (insn_and) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          rf_rd_data = rf_rs1_data & rf_rs2_data;
+          rf_we = 1'b1;
+        end else begin
+          illegal_insn = 1'b1;
+        end
+      end
+      OpBranch: begin
+        if (insn_beq) begin
+          if (rf_rs1_data == rf_rs2_data) begin
+            pcNext = pcCurrent + imm_b_sext;
+          end
+        end else if (insn_bne) begin
+          if (rf_rs1_data != rf_rs2_data) begin
+            pcNext = pcCurrent + imm_b_sext;
+          end
+        end else if (insn_blt) begin
+          if (signed'(rf_rs1_data) < signed'(rf_rs2_data)) begin
+            pcNext = pcCurrent + imm_b_sext;
+          end
+        end else if (insn_bge) begin
+          if (signed'(rf_rs1_data) >= signed'(rf_rs2_data)) begin
+            pcNext = pcCurrent + imm_b_sext;
+          end
+        end else if (insn_bltu) begin
+          if (rf_rs1_data < rf_rs2_data) begin
+            pcNext = pcCurrent + imm_b_sext;
+          end
+        end else if (insn_bgeu) begin
+          if (rf_rs1_data >= rf_rs2_data) begin
+            pcNext = pcCurrent + imm_b_sext;
+          end
+        end else begin
+          illegal_insn = 1'b1;
+        end
+      end
+      OpEnviron: begin
+        if (insn_ecall) begin
+          halt = 1'b1;
+        end else begin
+          illegal_insn = 1'b1;
+        end
+      end
+
       default: begin
         illegal_insn = 1'b1;
       end
