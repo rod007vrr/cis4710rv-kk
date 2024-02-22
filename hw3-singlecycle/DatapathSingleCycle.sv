@@ -210,14 +210,31 @@ module DatapathSingleCycle (
     end
   end
 
+  logic [4:0] rf_rd;
+  logic [`REG_SIZE] rf_rd_data;
+  logic rf_we;
+
+  RegFile rf (
+      .rd(rf_rd),
+      .rd_data(rf_rd_data),
+      .rs1(),
+      .rs1_data(),
+      .rs2(),
+      .rs2_data(),
+      .clk(clk),
+      .rst(rst),
+      .we(rf_we)
+  );
+
   logic illegal_insn;
 
   always_comb begin
     illegal_insn = 1'b0;
-
     case (insn_opcode)
       OpLui: begin
-        // TODO: start here by implementing lui
+        rf_rd = insn_from_imem[11:7];
+        rf_rd_data = {insn_from_imem[31:12], 12'b0};
+        rf_we = 1'b1;
       end
       default: begin
         illegal_insn = 1'b1;
