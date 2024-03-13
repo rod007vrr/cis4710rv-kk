@@ -10,20 +10,19 @@
 `include "../hw2b/cla.sv"
 
 module RegFile (
-    input logic [4:0] rd,  //reg number
-    input logic [`REG_SIZE] rd_data,  //to write
-    input logic [4:0] rs1,  // which to read from
-    output logic [`REG_SIZE] rs1_data,  // data to read
-    input logic [4:0] rs2,  //which to read from
-    output logic [`REG_SIZE] rs2_data,  // to read
+    input logic [4:0] rd,
+    input logic [`REG_SIZE] rd_data,
+    input logic [4:0] rs1,
+    output logic [`REG_SIZE] rs1_data,
+    input logic [4:0] rs2,
+    output logic [`REG_SIZE] rs2_data,
 
-    input logic clk,  //clock
-    input logic we,   //if writing is enabled
-    input logic rst   //reset to known state
+    input logic clk,
+    input logic we,
+    input logic rst
 );
   localparam int NumRegs = 32;
-  logic [`REG_SIZE] regs[NumRegs];  //these are the actual registers! nice!!!
-
+  logic [`REG_SIZE] regs[NumRegs];
 
   // TODO: your code here
 
@@ -59,8 +58,8 @@ module DatapathSingleCycle (
     // addr_to_dmem is a read-write port
     output wire [`REG_SIZE] addr_to_dmem,
     input logic [`REG_SIZE] load_data_from_dmem,
-    output wire [`REG_SIZE] store_data_to_dmem,
-    output wire [3:0] store_we_to_dmem
+    output logic [`REG_SIZE] store_data_to_dmem,
+    output logic [3:0] store_we_to_dmem
 );
 
   // components of the instruction
@@ -210,7 +209,6 @@ module DatapathSingleCycle (
     end
   end
 
-
   logic illegal_insn;
 
   logic [4:0] rf_rd;
@@ -246,6 +244,20 @@ module DatapathSingleCycle (
       .sum(cla_sum)
   );
 
+  logic [63:0] mul_h, mul_hsu, mul_hu;
+
+  logic [`REG_SIZE] addr_ld;
+  assign addr_to_dmem = {addr_ld[31:2], 2'b00};
+
+  logic [`REG_SIZE] dividend, divisor, remainder, quotient;
+
+  divider_unsigned divider_inst (
+      .i_dividend (dividend),
+      .i_divisor  (divisor),
+      .o_quotient (quotient),
+      .o_remainder(remainder)
+  );
+
   always_comb begin
     illegal_insn = 1'b0;
 
@@ -260,10 +272,21 @@ module DatapathSingleCycle (
     cla_a = 32'd0;
     cla_b = 32'd0;
     cla_cin = 1'd0;
+    dividend = 32'd0;
+    divisor = 32'd1;
+    addr_ld = 'd0;
+    store_we_to_dmem = 4'b0000;
+
     case (insn_opcode)
       OpLui: begin
-        rf_rd = insn_from_imem[11:7];
-        rf_rd_data = {insn_from_imem[31:12], 12'b0};
+        rf_rd = insn_rd;
+        rf_rd_data = {insn_from_imem[31:12], 12'd0};
+        pcNext = pcCurrent + 32'd4;
+        rf_we = 1'b1;
+      end
+      OpAuipc: begin
+        rf_rd = insn_rd;
+        rf_rd_data = pcCurrent + {insn_from_imem[31:12], 12'd0};
         rf_we = 1'b1;
       end
       OpRegImm: begin
@@ -425,6 +448,201 @@ module DatapathSingleCycle (
           rf_rs2 = insn_rs2;
           rf_rd_data = rf_rs1_data & rf_rs2_data;
           rf_we = 1'b1;
+        end else if (insn_mul) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          rf_rd_data = rf_rs1_data * rf_rs2_data;
+          rf_we = 1'b1;
+        end else if (insn_mulh) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          mul_h = {{32{rf_rs1_data[31]}}, rf_rs1_data} * {{32{rf_rs2_data[31]}}, rf_rs2_data};
+          rf_rd_data = mul_h[63:32];
+          rf_we = 1'b1;
+        end else if (insn_mulhsu) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          mul_hsu = {{32{rf_rs1_data[31]}}, rf_rs1_data} * {32'b0, rf_rs2_data};
+          rf_rd_data = mul_hsu[63:32];
+          rf_we = 1'b1;
+        end else if (insn_mulhu) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          mul_hu = rf_rs1_data * rf_rs2_data;
+          rf_rd_data = mul_hu[63:32];
+          rf_we = 1'b1;
+        end else if (insn_div) begin
+          rf_rd  = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          if (rf_rs1_data[31]) begin
+            dividend = ~rf_rs1_data + 1;
+          end else begin
+            dividend = rf_rs1_data;
+          end
+          if (rf_rs2_data[31]) begin
+            divisor = ~rf_rs2_data + 1;
+          end else begin
+            divisor = rf_rs2_data;
+          end
+          if (!(rf_rs1_data[31] ^ rf_rs2_data[31]) || (rf_rs2_data == 'd0))  //check this again
+            rf_rd_data = quotient;
+          else rf_rd_data = ~(quotient) + 'd1;
+          rf_we = 1'b1;
+        end else if (insn_divu) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          dividend = rf_rs1_data;
+          divisor = rf_rs2_data;
+          rf_rd_data = quotient;
+          rf_we = 1'b1;
+        end else if (insn_rem) begin
+          rf_rd  = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          if (rf_rs1_data[31]) begin
+            dividend = ~rf_rs1_data + 1;
+          end else dividend = rf_rs1_data;
+          if (rf_rs2_data[31]) begin
+            divisor = ~rf_rs2_data + 1;
+          end else divisor = rf_rs2_data;
+          if (rf_rs1_data[31]) rf_rd_data = ~remainder + 'd1;
+          else rf_rd_data = remainder;
+          rf_we = 1'b1;
+        end else if (insn_remu) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          dividend = rf_rs1_data;
+          divisor = rf_rs2_data;
+          rf_rd_data = remainder;
+          rf_we = 1'b1;
+        end else begin
+          illegal_insn = 1'b1;
+        end
+      end
+      OpLoad: begin
+        if (insn_lb) begin
+          rf_rd   = insn_rd;
+          rf_rs1  = insn_rs1;
+          addr_ld = rf_rs1_data + imm_i_sext;
+          case (addr_ld[1:0])
+            2'b00: rf_rd_data = {{24{load_data_from_dmem[7]}}, load_data_from_dmem[7:0]};
+            2'b01: rf_rd_data = {{24{load_data_from_dmem[15]}}, load_data_from_dmem[15:8]};
+            2'b10: rf_rd_data = {{24{load_data_from_dmem[23]}}, load_data_from_dmem[23:16]};
+            2'b11: rf_rd_data = {{24{load_data_from_dmem[31]}}, load_data_from_dmem[31:24]};
+          endcase
+          rf_we = 1'b1;
+        end else if (insn_lh) begin
+          rf_rd   = insn_rd;
+          rf_rs1  = insn_rs1;
+          addr_ld = rf_rs1_data + imm_i_sext;
+          case (addr_ld[1])
+            1'b0: rf_rd_data = {{16{load_data_from_dmem[15]}}, load_data_from_dmem[15:0]};
+            1'b1: rf_rd_data = {{16{load_data_from_dmem[31]}}, load_data_from_dmem[31:16]};
+          endcase
+          rf_we = 1'b1;
+        end else if (insn_lw) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          addr_ld = rf_rs1_data + imm_i_sext;
+          rf_rd_data = load_data_from_dmem[31:0];
+          rf_we = 1'b1;
+        end else if (insn_lbu) begin
+          rf_rd   = insn_rd;
+          rf_rs1  = insn_rs1;
+          addr_ld = rf_rs1_data + imm_i_sext;
+          case (addr_ld[1:0])
+            2'b00: rf_rd_data = {24'b0, load_data_from_dmem[7:0]};
+            2'b01: rf_rd_data = {24'b0, load_data_from_dmem[15:8]};
+            2'b10: rf_rd_data = {24'b0, load_data_from_dmem[23:16]};
+            2'b11: rf_rd_data = {24'b0, load_data_from_dmem[31:24]};
+          endcase
+          rf_we = 1'b1;
+        end else if (insn_lhu) begin
+          rf_rd   = insn_rd;
+          rf_rs1  = insn_rs1;
+          addr_ld = rf_rs1_data + imm_i_sext;
+          case (addr_ld[1])
+            1'b0: rf_rd_data = {16'b0, load_data_from_dmem[15:0]};
+            1'b1: rf_rd_data = {16'b0, load_data_from_dmem[31:16]};
+          endcase
+          rf_we = 1'b1;
+        end else begin
+          illegal_insn = 1'b1;
+        end
+      end
+      OpStore: begin
+        if (insn_sb) begin
+          rf_rd   = insn_rd;
+          rf_rs1  = insn_rs1;
+          rf_rs2  = insn_rs2;
+          addr_ld = rf_rs1_data + imm_s_sext;
+          case (addr_ld[1:0])
+            2'b00: begin
+              store_data_to_dmem[7:0] = rf_rs2_data[7:0];
+              store_we_to_dmem = 4'b0001;
+            end
+            2'b01: begin
+              store_data_to_dmem[15:8] = rf_rs2_data[7:0];
+              store_we_to_dmem = 4'b0010;
+            end
+            2'b10: begin
+              store_data_to_dmem[23:16] = rf_rs2_data[7:0];
+              store_we_to_dmem = 4'b0100;
+            end
+            2'b11: begin
+              store_data_to_dmem[31:24] = rf_rs2_data[7:0];
+              store_we_to_dmem = 4'b1000;
+            end
+          endcase
+        end else if (insn_sh) begin
+          rf_rd   = insn_rd;
+          rf_rs1  = insn_rs1;
+          rf_rs2  = insn_rs2;
+          addr_ld = rf_rs1_data + imm_s_sext;
+          case (addr_ld[1])
+            1'b0: begin
+              store_data_to_dmem[15:0] = rf_rs2_data[15:0];
+              store_we_to_dmem = 4'b0011;
+            end
+            1'b1: begin
+              store_data_to_dmem[31:16] = rf_rs2_data[15:0];
+              store_we_to_dmem = 4'b1100;
+            end
+          endcase
+        end else if (insn_sw) begin
+          rf_rd = insn_rd;
+          rf_rs1 = insn_rs1;
+          rf_rs2 = insn_rs2;
+          addr_ld = rf_rs1_data + imm_s_sext;
+          store_data_to_dmem[31:0] = rf_rs2_data;
+          store_we_to_dmem = 4'b1111;
+        end else begin
+          illegal_insn = 1'b1;
+        end
+      end
+      OpJal: begin
+        if (insn_jal) begin
+          rf_rd = insn_rd;
+          pcNext = pcCurrent + imm_j_sext;
+          rf_rd_data = pcCurrent + 'd4;
+          rf_we = 1'b1;
+        end else begin
+          illegal_insn = 1'b1;
+        end
+      end
+      OpJalr: begin
+        if (insn_jalr) begin
+          rf_rd = insn_rd;
+          pcNext = (rf_rs1_data + imm_i_sext) & ~(32'h1);
+          rf_rd_data = pcCurrent + 'd4;
+          rf_we = 1'b1;
         end else begin
           illegal_insn = 1'b1;
         end
@@ -465,7 +683,9 @@ module DatapathSingleCycle (
           illegal_insn = 1'b1;
         end
       end
+      OpMiscMem: begin
 
+      end
       default: begin
         illegal_insn = 1'b1;
       end
