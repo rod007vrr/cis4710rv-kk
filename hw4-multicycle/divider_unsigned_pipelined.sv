@@ -1,4 +1,5 @@
-/* INSERT NAME AND PENNKEY HERE */
+/* Kaeli Kaymak-Loveless kaelikl 
+   Rodrigo Villagomez vrodrigo */
 
 `timescale 1ns / 1ns
 
@@ -13,6 +14,81 @@ module divider_unsigned_pipelined (
 );
 
     // TODO: your code here
+    wire [31:0] c_dividend[0:32];
+    wire [31:0] c_remainder[0:32];
+    wire [31:0] c_quotient[0:32];
+    assign c_dividend[0]  = i_dividend;
+    assign c_remainder[0] = 32'b0;
+    assign c_quotient[0]  = 32'b0;
+
+    /*logic [31:0] stage1_dividend;
+    logic [31:0] stage1_divisor;
+    logic [31:0] stage1_remainder;
+    logic [31:0] stage1_quotient; 
+
+    always_ff @(posedge clk) 
+    if (rst) begin
+        stage1_dividend <= 32'b0;
+        stage1_divisor <= 32'b0;
+        stage1_remainder <= 32'b0;
+        stage1_quotient <= 32'b0;
+    end else begin
+        stage1_dividend <= c_dividend[0];
+        stage1_divisor <= i_divisor;
+        stage1_remainder <= c_remainder[0];
+        stage1_quotient <= c_quotient[0];
+    end*/
+
+    genvar i;
+    for (i = 0; i < 16; i = i + 1) begin
+        divu_1iter divu_1iter_inst (
+            .i_dividend (c_dividend[i]),
+            .i_divisor  (i_divisor),
+            .i_remainder(c_remainder[i]),
+            .i_quotient (c_quotient[i]),
+            .o_dividend (c_dividend[i+1]),
+            .o_remainder(c_remainder[i+1]),
+            .o_quotient (c_quotient[i+1])
+        );
+    end
+
+    logic [31:0] stage2_dividend;
+    logic [31:0] stage2_divisor;
+    logic [31:0] stage2_remainder;
+    logic [31:0] stage2_quotient; 
+
+    always_ff @(posedge clk) 
+    if (rst) begin
+        stage2_dividend <= 32'b0;
+        stage2_divisor <= 32'b0;
+        stage2_remainder <= 32'b0;
+        stage2_quotient <= 32'b0;
+    end else begin
+        stage2_dividend <= c_dividend[16];
+        stage2_divisor <= i_divisor;
+        stage2_remainder <= c_remainder[16];
+        stage2_quotient <= c_quotient[16];
+    end
+
+    assign c_dividend[16] = stage2_dividend;
+    assign c_remainder[16] = stage2_remainder;
+    assign c_quotient[16] = stage2_quotient;
+
+    genvar j;
+    for (j = 16; j < 32; j = j + 1) begin
+        divu_1iter divu_1iter_inst (
+            .i_dividend (c_dividend[j]),
+            .i_divisor  (stage2_divisor),
+            .i_remainder(c_remainder[j]),
+            .i_quotient (c_quotient[j]),
+            .o_dividend (c_dividend[j+1]),
+            .o_remainder(c_remainder[j+1]),
+            .o_quotient (c_quotient[j+1])
+        );
+    end
+
+    assign o_remainder = c_remainder[32];
+    assign o_quotient = c_quotient[32]; 
 
 endmodule
 
@@ -27,6 +103,37 @@ module divu_1iter (
     output wire [31:0] o_quotient
 );
 
-  // TODO: copy your code from HW2A here
+  wire [31:0] r_temp1;
+  wire [31:0] dividend_temp1;
+  wire [31:0] dividend_temp2;
+  wire [31:0] rem1;
+  assign r_temp1 = {i_remainder[30:0], 1'b0};
+  assign dividend_temp1 = {31'b0, i_dividend[31]};
+  assign dividend_temp2 = dividend_temp1 & 32'b1;
+  assign rem1 = r_temp1 | dividend_temp2;
+
+  //quotient lshift for future use
+  wire [31:0] quotient_lshift;
+  assign quotient_lshift = {i_quotient[30:0], 1'b0};
+
+  //first part of the if statement 
+  wire [31:0] o_quotient1;
+  wire [31:0] o_remainder1;
+  assign o_quotient1  = quotient_lshift | 32'b1;
+  assign o_remainder1 = rem1 - i_divisor;
+
+  //second part of the if statement
+  wire [31:0] o_quotient2;
+  wire [31:0] o_remainder2;
+  assign o_quotient2  = quotient_lshift | 32'b0;
+  assign o_remainder2 = rem1;
+
+
+  //muxing over the results based on if condition is positive
+  assign o_quotient   = (rem1 >= i_divisor) ? o_quotient1 : o_quotient2;
+  assign o_remainder  = (rem1 >= i_divisor) ? o_remainder1 : o_remainder2;
+
+  //dividend = dividend << 1    
+  assign o_dividend   = {i_dividend[30:0], 1'b0};
 
 endmodule
