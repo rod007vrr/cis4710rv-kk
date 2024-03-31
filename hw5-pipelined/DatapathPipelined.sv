@@ -156,18 +156,18 @@ module DatapathPipelined (
 );
 
   // opcodes - see section 19 of RiscV spec
-  // localparam bit [`OPCODE_SIZE] OpcodeLoad = 7'b00_000_11;
-  // localparam bit [`OPCODE_SIZE] OpcodeStore = 7'b01_000_11;
-  // localparam bit [`OPCODE_SIZE] OpcodeBranch = 7'b11_000_11;
-  // localparam bit [`OPCODE_SIZE] OpcodeJalr = 7'b11_001_11;
-  // localparam bit [`OPCODE_SIZE] OpcodeMiscMem = 7'b00_011_11;
-  // localparam bit [`OPCODE_SIZE] OpcodeJal = 7'b11_011_11;
+  localparam bit [`OPCODE_SIZE] OpcodeLoad = 7'b00_000_11;
+  localparam bit [`OPCODE_SIZE] OpcodeStore = 7'b01_000_11;
+  localparam bit [`OPCODE_SIZE] OpcodeBranch = 7'b11_000_11;
+  localparam bit [`OPCODE_SIZE] OpcodeJalr = 7'b11_001_11;
+  localparam bit [`OPCODE_SIZE] OpcodeMiscMem = 7'b00_011_11;
+  localparam bit [`OPCODE_SIZE] OpcodeJal = 7'b11_011_11;
 
-  // localparam bit [`OPCODE_SIZE] OpcodeRegImm = 7'b00_100_11;
-  // localparam bit [`OPCODE_SIZE] OpcodeRegReg = 7'b01_100_11;
-  // localparam bit [`OPCODE_SIZE] OpcodeEnviron = 7'b11_100_11;
+  localparam bit [`OPCODE_SIZE] OpcodeRegImm = 7'b00_100_11;
+  localparam bit [`OPCODE_SIZE] OpcodeRegReg = 7'b01_100_11;
+  localparam bit [`OPCODE_SIZE] OpcodeEnviron = 7'b11_100_11;
 
-  // localparam bit [`OPCODE_SIZE] OpcodeAuipc = 7'b00_101_11;
+  localparam bit [`OPCODE_SIZE] OpcodeAuipc = 7'b00_101_11;
   localparam bit [`OPCODE_SIZE] OpcodeLui = 7'b01_101_11;
 
   // cycle counter, not really part of any stage but useful for orienting within GtkWave
@@ -329,20 +329,131 @@ module DatapathPipelined (
   /*****************/
   /* MEMORY STAGE */
   /*****************/
+  logic [`OPCODE_SIZE] m_insn_opcode;
+  assign m_insn_opcode = execute_state.insn[6:0];
 
+  wire insn_lui = m_insn_opcode == OpcodeLui;
+  wire insn_auipc = m_insn_opcode == OpcodeAuipc;
+  wire insn_jal = m_insn_opcode == OpcodeJal;
+  wire insn_jalr = m_insn_opcode == OpcodeJalr;
+
+  wire insn_beq = m_insn_opcode == OpcodeBranch && execute_state.insn[14:12] == 3'b000;
+  wire insn_bne = m_insn_opcode == OpcodeBranch && execute_state.insn[14:12] == 3'b001;
+  wire insn_blt = m_insn_opcode == OpcodeBranch && execute_state.insn[14:12] == 3'b100;
+  wire insn_bge = m_insn_opcode == OpcodeBranch && execute_state.insn[14:12] == 3'b101;
+  wire insn_bltu = m_insn_opcode == OpcodeBranch && execute_state.insn[14:12] == 3'b110;
+  wire insn_bgeu = m_insn_opcode == OpcodeBranch && execute_state.insn[14:12] == 3'b111;
+
+  wire insn_lb = m_insn_opcode == OpcodeLoad && execute_state.insn[14:12] == 3'b000;
+  wire insn_lh = m_insn_opcode == OpcodeLoad && execute_state.insn[14:12] == 3'b001;
+  wire insn_lw = m_insn_opcode == OpcodeLoad && execute_state.insn[14:12] == 3'b010;
+  wire insn_lbu = m_insn_opcode == OpcodeLoad && execute_state.insn[14:12] == 3'b100;
+  wire insn_lhu = m_insn_opcode == OpcodeLoad && execute_state.insn[14:12] == 3'b101;
+
+  wire insn_sb = m_insn_opcode == OpcodeStore && execute_state.insn[14:12] == 3'b000;
+  wire insn_sh = m_insn_opcode == OpcodeStore && execute_state.insn[14:12] == 3'b001;
+  wire insn_sw = m_insn_opcode == OpcodeStore && execute_state.insn[14:12] == 3'b010;
+
+  wire insn_addi = m_insn_opcode == OpcodeRegImm && execute_state.insn[14:12] == 3'b000;
+  wire insn_slti = m_insn_opcode == OpcodeRegImm && execute_state.insn[14:12] == 3'b010;
+  wire insn_sltiu = m_insn_opcode == OpcodeRegImm && execute_state.insn[14:12] == 3'b011;
+  wire insn_xori = m_insn_opcode == OpcodeRegImm && execute_state.insn[14:12] == 3'b100;
+  wire insn_ori = m_insn_opcode == OpcodeRegImm && execute_state.insn[14:12] == 3'b110;
+  wire insn_andi = m_insn_opcode == OpcodeRegImm && execute_state.insn[14:12] == 3'b111;
+
+  wire insn_slli = m_insn_opcode == OpcodeRegImm && execute_state.insn[14:12] == 3'b001 && execute_state.insn[31:25] == 7'd0;
+  wire insn_srli = m_insn_opcode == OpcodeRegImm && execute_state.insn[14:12] == 3'b101 && execute_state.insn[31:25] == 7'd0;
+  wire insn_srai = m_insn_opcode == OpcodeRegImm && execute_state.insn[14:12] == 3'b101 && execute_state.insn[31:25] == 7'b0100000;
+
+  wire insn_add = m_insn_opcode == OpcodeRegReg && execute_state.insn[14:12] == 3'b000 && execute_state.insn[31:25] == 7'd0;
+  wire insn_sub  = m_insn_opcode == OpcodeRegReg && execute_state.insn[14:12] == 3'b000 && execute_state.insn[31:25] == 7'b0100000;
+  wire insn_sll = m_insn_opcode == OpcodeRegReg && execute_state.insn[14:12] == 3'b001 && execute_state.insn[31:25] == 7'd0;
+  wire insn_slt = m_insn_opcode == OpcodeRegReg && execute_state.insn[14:12] == 3'b010 && execute_state.insn[31:25] == 7'd0;
+  wire insn_sltu = m_insn_opcode == OpcodeRegReg && execute_state.insn[14:12] == 3'b011 && execute_state.insn[31:25] == 7'd0;
+  wire insn_xor = m_insn_opcode == OpcodeRegReg && execute_state.insn[14:12] == 3'b100 && execute_state.insn[31:25] == 7'd0;
+  wire insn_srl = m_insn_opcode == OpcodeRegReg && execute_state.insn[14:12] == 3'b101 && execute_state.insn[31:25] == 7'd0;
+  wire insn_sra  = m_insn_opcode == OpcodeRegReg && execute_state.insn[14:12] == 3'b101 && execute_state.insn[31:25] == 7'b0100000;
+  wire insn_or = m_insn_opcode == OpcodeRegReg && execute_state.insn[14:12] == 3'b110 && execute_state.insn[31:25] == 7'd0;
+  wire insn_and = m_insn_opcode == OpcodeRegReg && execute_state.insn[14:12] == 3'b111 && execute_state.insn[31:25] == 7'd0;
+
+  wire insn_mul    = m_insn_opcode == OpcodeRegReg && execute_state.insn[31:25] == 7'd1 && execute_state.insn[14:12] == 3'b000;
+  wire insn_mulh   = m_insn_opcode == OpcodeRegReg && execute_state.insn[31:25] == 7'd1 && execute_state.insn[14:12] == 3'b001;
+  wire insn_mulhsu = m_insn_opcode == OpcodeRegReg && execute_state.insn[31:25] == 7'd1 && execute_state.insn[14:12] == 3'b010;
+  wire insn_mulhu  = m_insn_opcode == OpcodeRegReg && execute_state.insn[31:25] == 7'd1 && execute_state.insn[14:12] == 3'b011;
+  wire insn_div    = m_insn_opcode == OpcodeRegReg && execute_state.insn[31:25] == 7'd1 && execute_state.insn[14:12] == 3'b100;
+  wire insn_divu   = m_insn_opcode == OpcodeRegReg && execute_state.insn[31:25] == 7'd1 && execute_state.insn[14:12] == 3'b101;
+  wire insn_rem    = m_insn_opcode == OpcodeRegReg && execute_state.insn[31:25] == 7'd1 && execute_state.insn[14:12] == 3'b110;
+  wire insn_remu   = m_insn_opcode == OpcodeRegReg && execute_state.insn[31:25] == 7'd1 && execute_state.insn[14:12] == 3'b111;
+
+  wire insn_ecall = m_insn_opcode == OpcodeEnviron && execute_state.insn[31:7] == 25'd0;
+  wire insn_fence = m_insn_opcode == OpcodeMiscMem;
+
+
+  logic [31:0] cla_a;
+  logic [31:0] cla_b;
+  logic cla_cin;
+  logic [31:0] cla_sum;
+
+  cla cla_inst (
+      .a  (cla_a),
+      .b  (cla_b),
+      .cin(cla_cin),
+      .sum(cla_sum)
+  );
 
   //calculating the output
   logic [`REG_SIZE] m_output;
   logic illegal_insn;
-  logic [`OPCODE_SIZE] m_insn_opcode;
 
   //this block right here is kind of our ALU if you think about it
+  wire [11:0] imm_i; 
+  assign imm_i = execute_state.insn[31:20];
+  wire [ 4:0] imm_shamt = execute_state.insn[24:20];
+
+  logic [`REG_SIZE] mx_bypass_a;
+  logic [`REG_SIZE] mx_bypass_b;
+
+
   always_comb begin
+    // the problem is here because its 0 initialized 
+    if (memory_state.insn[11:7] == execute_state.insn[19:15] 
+        && memory_state.insn[11:7] != 5'b0) begin
+      mx_bypass_a = memory_state.o;
+    end else begin
+      mx_bypass_a = execute_state.a;
+    end
+
+    if (memory_state.insn[11:7] == execute_state.insn[24:20] 
+        && memory_state.insn[11:7] != 5'b0) begin
+      mx_bypass_b = memory_state.o;
+    end else begin
+      mx_bypass_b = execute_state.a;
+    end
+
     illegal_insn = 1'b0;
-    m_insn_opcode = execute_state.insn[6:0];
+    cla_a = 32'd0;
+    cla_b = 32'd0;
+    cla_cin = 1'b0;
+
     case (m_insn_opcode)
       OpcodeLui: begin
         m_output = {execute_state.insn[31:12], 12'd0};
+      end
+      OpcodeRegImm: begin
+        if (insn_addi) begin 
+          cla_a = mx_bypass_a;
+          cla_b = {{20{imm_i[11]}}, imm_i[11:0]};
+          cla_cin = 1'b0;
+          m_output = cla_sum;
+        end
+      end
+      OpcodeRegReg: begin
+        if (insn_add) begin
+          cla_a = mx_bypass_a;
+          cla_b = mx_bypass_b;
+          cla_cin = 1'b0;
+          m_output = cla_sum;
+        end
       end
       default: begin
           illegal_insn = 1'b1;
