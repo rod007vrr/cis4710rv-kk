@@ -52,8 +52,23 @@ module RegFile (
     input logic rst
 );
   localparam int NumRegs = 32;
-  genvar i;
   logic [`REG_SIZE] regs[NumRegs];
+  assign regs[0]  = 32'd0;  
+  assign rs1_data = regs[rs1];  
+  assign rs2_data = regs[rs2];  
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      for (int i = 1; i < NumRegs; i = i + 1) begin
+        regs[i] <= 32'd0;
+      end
+    end else begin
+      for (int i = 1; i < NumRegs; i = i + 1) begin
+        if (we && rd == i[4:0]) begin
+          regs[i] <= rd_data;
+        end
+      end
+    end
+  end
 
   // TODO: your code here
 
@@ -119,18 +134,18 @@ module DatapathPipelined (
 );
 
   // opcodes - see section 19 of RiscV spec
-  localparam bit [`OPCODE_SIZE] OpcodeLoad = 7'b00_000_11;
-  localparam bit [`OPCODE_SIZE] OpcodeStore = 7'b01_000_11;
-  localparam bit [`OPCODE_SIZE] OpcodeBranch = 7'b11_000_11;
-  localparam bit [`OPCODE_SIZE] OpcodeJalr = 7'b11_001_11;
-  localparam bit [`OPCODE_SIZE] OpcodeMiscMem = 7'b00_011_11;
-  localparam bit [`OPCODE_SIZE] OpcodeJal = 7'b11_011_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeLoad = 7'b00_000_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeStore = 7'b01_000_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeBranch = 7'b11_000_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeJalr = 7'b11_001_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeMiscMem = 7'b00_011_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeJal = 7'b11_011_11;
 
-  localparam bit [`OPCODE_SIZE] OpcodeRegImm = 7'b00_100_11;
-  localparam bit [`OPCODE_SIZE] OpcodeRegReg = 7'b01_100_11;
-  localparam bit [`OPCODE_SIZE] OpcodeEnviron = 7'b11_100_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeRegImm = 7'b00_100_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeRegReg = 7'b01_100_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeEnviron = 7'b11_100_11;
 
-  localparam bit [`OPCODE_SIZE] OpcodeAuipc = 7'b00_101_11;
+  // localparam bit [`OPCODE_SIZE] OpcodeAuipc = 7'b00_101_11;
   localparam bit [`OPCODE_SIZE] OpcodeLui = 7'b01_101_11;
 
   // cycle counter, not really part of any stage but useful for orienting within GtkWave
@@ -210,6 +225,66 @@ module DatapathPipelined (
 
   // TODO: your code here, though you will also need to modify some of the code above
   // TODO: the testbench requires that your register file instance is named `rf`
+
+  logic illegal_insn;
+
+  logic [4:0] rf_rd;
+  logic [`REG_SIZE] rf_rd_data;
+  logic [4:0] rf_rs1;
+  logic [`REG_SIZE] rf_rs1_data;
+  logic [4:0] rf_rs2;
+  logic [`REG_SIZE] rf_rs2_data;
+
+  logic rf_we;
+
+  RegFile rf (
+      .rd(rf_rd),
+      .rd_data(rf_rd_data),
+      .rs1(rf_rs1),
+      .rs1_data(rf_rs1_data),
+      .rs2(rf_rs2),
+      .rs2_data(rf_rs2_data),
+      .clk(clk),
+      .rst(rst),
+      .we(rf_we)
+  );
+
+
+  logic [`REG_SIZE] x_output_a;
+  logic [`REG_SIZE] x_output_b;
+
+
+  wire [6:0] insn_funct7;
+  wire [4:0] insn_rs2;
+  wire [4:0] insn_rs1;
+  wire [2:0] insn_funct3;
+  wire [4:0] insn_rd;
+  wire [`OPCODE_SIZE] insn_opcode;
+
+  // breaking everything down based on the instruction
+  assign {insn_funct7, insn_rs2, insn_rs1, insn_funct3, insn_rd, insn_opcode} = insn_from_imem;
+
+
+
+  always_comb begin
+    rf_we = 1'b0;
+    illegal_insn = 1'b0;
+    case (insn_opcode)
+      OpcodeLui: begin
+        rf_rd = insn_rd;
+        rf_rd_data = {insn_from_imem[31:12], 12'd0};
+        // pcNext = f_pcCurrent + 32'd4;
+        rf_we = 1'b1;
+      end
+      default: begin
+            // Your default actions go here
+            // For example, you might want to set 'illegal_insn' to indicate an unrecognized opcode
+            illegal_insn = 1'b1;
+            // You can also add other default actions here
+        end
+    endcase
+  end
+  
 
 endmodule
 
