@@ -111,6 +111,28 @@ typedef struct packed {
   cycle_status_e cycle_status;
 } stage_decode_t;
 
+typedef struct packed {
+  logic [`REG_SIZE] pc;
+  logic [`REG_SIZE] a;
+  logic [`REG_SIZE] b;
+  logic [`INSN_SIZE] insn;
+  cycle_status_e cycle_status;
+} stage_execute_t;
+
+typedef struct packed {
+  logic [`REG_SIZE] o;
+  logic [`REG_SIZE] b;
+  logic [`INSN_SIZE] insn;
+  cycle_status_e cycle_status;
+} stage_memory_t;
+
+typedef struct packed {
+  logic [`REG_SIZE] o;
+  logic [`REG_SIZE] d;
+  logic [`INSN_SIZE] insn;
+  cycle_status_e cycle_status;
+} stage_writeback_t;
+
 
 module DatapathPipelined (
     input wire clk,
@@ -226,7 +248,10 @@ module DatapathPipelined (
   // TODO: your code here, though you will also need to modify some of the code above
   // TODO: the testbench requires that your register file instance is named `rf`
 
-  logic illegal_insn;
+  /*****************/
+  /* EXECUTE STAGE */
+  /*****************/
+
 
   logic [4:0] rf_rd;
   logic [`REG_SIZE] rf_rd_data;
@@ -249,41 +274,162 @@ module DatapathPipelined (
       .we(rf_we)
   );
 
+  // breaking down the instruction
+  wire [6:0] x_insn_funct7;
+  wire [4:0] x_insn_rs2;
+  wire [4:0] x_insn_rs1;
+  wire [2:0] x_insn_funct3;
+  wire [4:0] x_insn_rd;
+  wire [`OPCODE_SIZE] x_insn_opcode;
 
-  logic [`REG_SIZE] x_output_a;
-  logic [`REG_SIZE] x_output_b;
+  assign {x_insn_funct7, x_insn_rs2, x_insn_rs1, x_insn_funct3, x_insn_rd, x_insn_opcode} = decode_state.insn;
 
-
-  wire [6:0] insn_funct7;
-  wire [4:0] insn_rs2;
-  wire [4:0] insn_rs1;
-  wire [2:0] insn_funct3;
-  wire [4:0] insn_rd;
-  wire [`OPCODE_SIZE] insn_opcode;
-
-  // breaking everything down based on the instruction
-  assign {insn_funct7, insn_rs2, insn_rs1, insn_funct3, insn_rd, insn_opcode} = insn_from_imem;
-
-
+  // getting our outputs from memory
+  logic [`REG_SIZE] x_rs1_data;
+  logic [`REG_SIZE] x_rs2_data;
 
   always_comb begin
-    rf_we = 1'b0;
+    rf_rs1 = x_insn_rs1;
+    rf_rs2 = x_insn_rs2;
+    x_rs1_data = rf_rs1_data;
+    x_rs2_data = rf_rs2_data;
+  end
+
+  stage_execute_t execute_state;
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      execute_state <= '{
+        pc: 0,
+        insn: 0,
+        a: 0,
+        b: 0,
+        cycle_status: CYCLE_RESET
+      };
+    end else begin
+      begin
+        execute_state <= '{
+          pc: decode_state.pc,
+          a: x_rs1_data,
+          b: x_rs2_data,
+          insn: decode_state.insn,
+          cycle_status: decode_state.cycle_status
+        };
+      end
+    end
+  end
+  wire [255:0] x_disasm;
+  Disasm #(
+      .PREFIX("X")
+  ) disasm_1execute (
+      .insn  (execute_state.insn),
+      .disasm(x_disasm)
+  );
+
+  
+  /*****************/
+  /* MEMORY STAGE */
+  /*****************/
+
+
+  //calculating the output
+  logic [`REG_SIZE] m_output;
+  logic illegal_insn;
+  logic [`OPCODE_SIZE] m_insn_opcode;
+
+  //this block right here is kind of our ALU if you think about it
+  always_comb begin
     illegal_insn = 1'b0;
-    case (insn_opcode)
+    m_insn_opcode = execute_state.insn[6:0];
+    case (m_insn_opcode)
       OpcodeLui: begin
-        rf_rd = insn_rd;
-        rf_rd_data = {insn_from_imem[31:12], 12'd0};
-        // pcNext = f_pcCurrent + 32'd4;
-        rf_we = 1'b1;
+        m_output = {execute_state.insn[31:12], 12'd0};
       end
       default: begin
-            // Your default actions go here
-            // For example, you might want to set 'illegal_insn' to indicate an unrecognized opcode
-            illegal_insn = 1'b1;
-            // You can also add other default actions here
+          illegal_insn = 1'b1;
         end
     endcase
   end
+
+  stage_memory_t memory_state;
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      memory_state <= '{
+        insn: 0,
+        o: 0,
+        b: 0,
+        cycle_status: CYCLE_RESET
+      };
+    end else begin
+      begin
+        memory_state <= '{
+          o: m_output,
+          b: execute_state.b,
+          insn: execute_state.insn,
+          cycle_status: execute_state.cycle_status
+        };
+      end
+    end
+  end
+  wire [255:0] m_disasm;
+  Disasm #(
+      .PREFIX("M")
+  ) disasm_1memory (
+      .insn  (memory_state.insn),
+      .disasm(m_disasm)
+  );
+
+  /*****************/
+  /* WRITEBACK STAGE */
+  /*****************/
+
+  logic [`REG_SIZE] w_loaded_data;
+
+  always_comb begin
+    w_loaded_data = load_data_from_dmem;
+  end
+
+  stage_writeback_t writeback_state;
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      writeback_state <= '{
+        insn: 0,
+        o: 0,
+        d: 0,
+        cycle_status: CYCLE_RESET
+      };
+    end else begin
+      begin
+        writeback_state <= '{
+          o: memory_state.o,
+          d: w_loaded_data,
+          insn: memory_state.insn,
+          cycle_status: memory_state.cycle_status
+        };
+      end
+    end
+  end
+
+  // send the outputs to the memory stage
+
+  wire [6:0] w_insn_funct7;
+  wire [4:0] w_insn_rs2;
+  wire [4:0] w_insn_rs1;
+  wire [2:0] w_insn_funct3;
+  wire [4:0] w_insn_rd;
+  wire [`OPCODE_SIZE] w_insn_opcode;
+
+  assign {w_insn_funct7, w_insn_rs2, w_insn_rs1, w_insn_funct3, w_insn_rd, w_insn_opcode} = writeback_state.insn;
+
+  always_comb begin
+    rf_rd = writeback_state.insn[11:7];
+    rf_rd_data = writeback_state.o;
+    rf_we = 1'b1;
+  end
+
+
+
+
+
   
 
 endmodule
