@@ -189,6 +189,9 @@ module DatapathPipelined (
   wire [`REG_SIZE] f_insn;
   cycle_status_e f_cycle_status;
 
+  logic fd_clear_for_branch; // this is used when we clear the whole thing for branch
+  logic [`REG_SIZE] fd_new_pc; //set when we branch
+
   // program counter
   always_ff @(posedge clk) begin
     if (rst) begin
@@ -197,7 +200,11 @@ module DatapathPipelined (
       f_cycle_status <= CYCLE_NO_STALL;
     end else begin
       f_cycle_status <= CYCLE_NO_STALL;
-      f_pc_current <= f_pc_current + 4;
+      if (fd_clear_for_branch) begin
+        f_pc_current <= fd_new_pc;
+      end else begin
+        f_pc_current <= f_pc_current + 4;
+      end
     end
   end
   // send PC to imem
@@ -228,7 +235,13 @@ module DatapathPipelined (
         cycle_status: CYCLE_RESET
       };
     end else begin
-      begin
+      if (fd_clear_for_branch) begin
+        decode_state <= '{
+          pc: 0,
+          insn: 0,
+          cycle_status: CYCLE_TAKEN_BRANCH
+        };
+      end else begin
         decode_state <= '{
           pc: f_pc_current,
           insn: f_insn,
@@ -321,13 +334,23 @@ module DatapathPipelined (
       };
     end else begin
       begin
-        execute_state <= '{
-          pc: decode_state.pc,
-          a: x_rs1_data,
-          b: x_rs2_data,
-          insn: decode_state.insn,
-          cycle_status: decode_state.cycle_status
-        };
+        if (fd_clear_for_branch) begin 
+          execute_state <= '{
+            pc: fd_new_pc,
+            a: 0,
+            b: 0,
+            insn: 0,
+            cycle_status: CYCLE_TAKEN_BRANCH
+          };
+        end else begin 
+          execute_state <= '{
+            pc: decode_state.pc,
+            a: x_rs1_data,
+            b: x_rs2_data,
+            insn: decode_state.insn,
+            cycle_status: decode_state.cycle_status
+          };
+        end
       end
     end
   end
@@ -419,10 +442,22 @@ module DatapathPipelined (
   logic [`REG_SIZE] m_output;
   logic illegal_insn;
 
+  wire [6:0] m_insn_funct7;
+  assign m_insn_funct7 = execute_state.insn[31:25];
+
+  wire [4:0] m_insn_rd;
+  assign m_insn_rd = execute_state.insn[11:7];
+
   //this block right here is kind of our ALU if you think about it
   wire [11:0] imm_i; 
   assign imm_i = execute_state.insn[31:20];
   wire [ 4:0] imm_shamt = execute_state.insn[24:20];
+  wire [31:0] imm_i_sext = {{20{imm_i[11]}}, imm_i};
+
+  wire [12:0] imm_b;
+  assign {imm_b[12], imm_b[10:5]} = m_insn_funct7, {imm_b[4:1], imm_b[11]} = m_insn_rd, imm_b[0] = 1'b0;
+  wire [`REG_SIZE] imm_b_sext = {{19{imm_b[12]}}, imm_b[12:0]};
+
 
   logic [`REG_SIZE] m_bypass_a;
   logic [`REG_SIZE] m_bypass_b;
@@ -459,6 +494,13 @@ module DatapathPipelined (
     cla_b = 32'd0;
     cla_cin = 1'b0;
 
+    m_output = 32'd0;
+
+    fd_new_pc = 32'd0;
+    fd_clear_for_branch = 1'b0;
+
+
+
     case (m_insn_opcode)
       OpcodeLui: begin
         m_output = {execute_state.insn[31:12], 12'd0};
@@ -466,7 +508,7 @@ module DatapathPipelined (
       OpcodeRegImm: begin
         if (insn_addi) begin 
           cla_a = m_bypass_a;
-          cla_b = {{20{imm_i[11]}}, imm_i[11:0]};
+          cla_b = imm_i_sext;
           cla_cin = 1'b0;
           m_output = cla_sum;
         end
@@ -477,6 +519,17 @@ module DatapathPipelined (
           cla_b = m_bypass_b;
           cla_cin = 1'b0;
           m_output = cla_sum;
+        end
+      end
+      OpcodeBranch: begin
+        if (insn_bne) begin
+          if (m_bypass_a != m_bypass_b) begin
+            // try this with pc to imem in case it doesn't work with this one
+            fd_new_pc = execute_state.pc + imm_b_sext;
+            //setting this so we clear out our memory
+            fd_clear_for_branch = 1'b1;
+            // f_insn = 32'b0;
+          end
         end
       end
       default: begin
