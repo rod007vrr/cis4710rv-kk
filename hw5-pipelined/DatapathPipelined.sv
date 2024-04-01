@@ -521,8 +521,7 @@ module DatapathPipelined (
           cla_b = imm_i_sext;
           cla_cin = 1'b0;
           m_output = cla_sum;
-        end
-        if (insn_slti) begin
+        end else if (insn_slti) begin
           if ($signed(m_bypass_a) < $signed(imm_i_sext)) begin
             m_output = 32'b1;
           end else begin
