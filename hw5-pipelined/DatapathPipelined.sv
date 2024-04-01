@@ -291,8 +291,21 @@ module DatapathPipelined (
   always_comb begin
     rf_rs1 = x_insn_rs1;
     rf_rs2 = x_insn_rs2;
-    x_rs1_data = rf_rs1_data;
-    x_rs2_data = rf_rs2_data;
+
+    if (writeback_state.insn[11:7] == decode_state.insn[19:15] 
+        && writeback_state.insn[11:7] != 5'b0) begin
+      x_rs1_data = writeback_state.o;
+    end else begin
+      x_rs1_data = rf_rs1_data;
+    end
+
+    if (writeback_state.insn[11:7] == decode_state.insn[24:20] 
+        && writeback_state.insn[11:7] != 5'b0) begin
+      x_rs2_data = writeback_state.o;
+    end else begin
+      x_rs2_data = rf_rs2_data;
+    end
+
   end
 
   stage_execute_t execute_state;
