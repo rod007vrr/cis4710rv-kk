@@ -215,7 +215,24 @@ module DatapathPipelined (
   end
   // send PC to imem
   assign pc_to_imem = f_pc_current;
-  assign f_insn = insn_from_imem;
+
+  logic [31:0] temp_insn;
+  logic [6:0] temp_insn_opcode;
+  logic [31:0] out_insn;
+  always_comb begin
+    temp_insn = insn_from_imem;
+    temp_insn_opcode = temp_insn[6:0];
+
+    if (temp_insn_opcode == OpcodeStore 
+    || temp_insn_opcode == OpcodeBranch
+    || temp_insn_opcode == 0'b1110011) begin
+      out_insn = {temp_insn[31:12], 5'd0, temp_insn[6:0]};
+    end else begin
+      out_insn = temp_insn;
+    end
+  end
+
+  assign f_insn = out_insn;
 
   // Here's how to disassemble an insn into a string you can view in GtkWave.
   // Use PREFIX to provide a 1-character tag to identify which stage the insn comes from.
