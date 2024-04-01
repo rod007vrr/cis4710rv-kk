@@ -120,6 +120,7 @@ typedef struct packed {
 } stage_execute_t;
 
 typedef struct packed {
+  logic [`REG_SIZE] pc;
   logic [`REG_SIZE] o;
   logic [`REG_SIZE] b;
   logic [`INSN_SIZE] insn;
@@ -127,6 +128,7 @@ typedef struct packed {
 } stage_memory_t;
 
 typedef struct packed {
+  logic [`REG_SIZE] pc;
   logic [`REG_SIZE] o;
   logic [`REG_SIZE] d;
   logic [`INSN_SIZE] insn;
@@ -545,6 +547,7 @@ module DatapathPipelined (
   always_ff @(posedge clk) begin
     if (rst) begin
       memory_state <= '{
+        pc: 0,
         insn: 0,
         o: 0,
         b: 0,
@@ -553,9 +556,10 @@ module DatapathPipelined (
     end else begin
       begin
         memory_state <= '{
+          pc: execute_state.pc,
+          insn: execute_state.insn,
           o: m_output,
           b: execute_state.b,
-          insn: execute_state.insn,
           cycle_status: execute_state.cycle_status
         };
       end
@@ -583,6 +587,7 @@ module DatapathPipelined (
   always_ff @(posedge clk) begin
     if (rst) begin
       writeback_state <= '{
+        pc: 0,
         insn: 0,
         o: 0,
         d: 0,
@@ -591,6 +596,7 @@ module DatapathPipelined (
     end else begin
       begin
         writeback_state <= '{
+          pc: memory_state.pc,
           o: memory_state.o,
           d: w_loaded_data,
           insn: memory_state.insn,
@@ -599,6 +605,11 @@ module DatapathPipelined (
       end
     end
   end
+
+  // for autograder
+  assign trace_writeback_pc = writeback_state.pc;
+  assign trace_writeback_insn = writeback_state.insn;
+  assign trace_writeback_cycle_status = writeback_state.cycle_status;
 
   // send the outputs to the memory stage
 
@@ -618,7 +629,12 @@ module DatapathPipelined (
   always_comb begin
     rf_rd = writeback_state.insn[11:7];
     rf_rd_data = w_mux_writeback;
-    rf_we = 1'b1;
+    // jmp opcode
+    if (writeback_state.insn[6:0] == 7'b1100011) begin
+      rf_we = 1'b0;
+    end else begin
+      rf_we = 1'b1;
+    end
   end
   
 
