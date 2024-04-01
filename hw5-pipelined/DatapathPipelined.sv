@@ -124,6 +124,8 @@ typedef struct packed {
   logic [`REG_SIZE] o;
   logic [`REG_SIZE] b;
   logic [`INSN_SIZE] insn;
+  logic we;
+  logic illegal_insn;
   cycle_status_e cycle_status;
 } stage_memory_t;
 
@@ -132,6 +134,8 @@ typedef struct packed {
   logic [`REG_SIZE] o;
   logic [`REG_SIZE] d;
   logic [`INSN_SIZE] insn;
+  logic illegal_insn;
+  logic we;
   cycle_status_e cycle_status;
 } stage_writeback_t;
 
@@ -470,7 +474,7 @@ module DatapathPipelined (
 
   logic [63:0] mul_h, mul_hsu, mul_hu;
 
-  logic [`REG_SIZE] bro;
+  logic m_we;
 
 
   always_comb begin
@@ -498,11 +502,12 @@ module DatapathPipelined (
       m_bypass_b = execute_state.b;
     end
 
-    
+
   end
 
   always_comb begin
 
+    // halt = 1'b0;
 
     illegal_insn = 1'b0;
     cla_a = 32'd0;
@@ -518,11 +523,15 @@ module DatapathPipelined (
     mul_hsu = 64'd0;
     mul_hu = 64'd0;
 
+    m_we = 1'b0;
+
     case (m_insn_opcode)
       OpcodeLui: begin
         m_output = {execute_state.insn[31:12], 12'd0};
+        m_we = 1'b1;
       end
       OpcodeRegImm: begin
+        m_we = 1'b1;
         if (insn_addi) begin 
           cla_a = m_bypass_a;
           cla_b = imm_i_sext;
@@ -553,10 +562,12 @@ module DatapathPipelined (
         end else if (insn_srai) begin
           m_output = $signed(m_bypass_a) >>> imm_shamt;
         end else begin
+          m_we = 1'b0;
           illegal_insn = 1'b1;
         end
       end
       OpcodeRegReg: begin
+        m_we = 1'b1;
         if (insn_add) begin
           cla_a = m_bypass_a;
           cla_b = m_bypass_b;
@@ -602,9 +613,13 @@ module DatapathPipelined (
         end else if (insn_mulhu) begin
           mul_hu = m_bypass_a * m_bypass_b;
           m_output = mul_hu[63:32];
-        end 
+        end else begin
+          m_we = 1'b0;
+          illegal_insn = 1'b1;
+        end
       end
       OpcodeJal: begin
+        m_we = 1'b0;
         if (insn_jal) begin
           fd_new_pc = execute_state.pc + imm_j_sext;
           fd_clear_for_branch = 1'b1;
@@ -614,6 +629,7 @@ module DatapathPipelined (
         end
       end
       OpcodeJalr: begin
+        m_we = 1'b0;
         if (insn_jalr) begin
           fd_new_pc = (m_bypass_a + imm_i_sext) & ~(32'h1);
           fd_clear_for_branch = 1'b1;
@@ -623,6 +639,7 @@ module DatapathPipelined (
         end
       end
       OpcodeBranch: begin
+        m_we = 1'b0;
         if (insn_beq) begin
           if (m_bypass_a == m_bypass_b) begin
             fd_new_pc = execute_state.pc + imm_b_sext;
@@ -657,7 +674,16 @@ module DatapathPipelined (
           illegal_insn = 1'b1;
         end
       end
+      OpcodeEnviron: begin
+        m_we = 1'b0;
+        if (insn_ecall) begin
+          // halt = 1'b1;
+        end else begin
+          illegal_insn = 1'b1;
+        end
+      end
       default: begin
+          m_we = 1'b0;
           illegal_insn = 1'b1;
         end
     endcase
@@ -673,6 +699,8 @@ module DatapathPipelined (
         insn: 0,
         o: 0,
         b: 0,
+        we: 0,
+        illegal_insn: 0,
         cycle_status: CYCLE_RESET
       };
     end else begin
@@ -682,6 +710,8 @@ module DatapathPipelined (
           pc: execute_state.pc,
           insn: execute_state.insn,
           b: execute_state.b,
+          we: m_we,
+          illegal_insn: illegal_insn,
           cycle_status: execute_state.cycle_status
         };
       end
@@ -713,6 +743,8 @@ module DatapathPipelined (
         insn: 0,
         o: 0,
         d: 0,
+        we: 0,
+        illegal_insn: 0,
         cycle_status: CYCLE_RESET
       };
     end else begin
@@ -722,6 +754,8 @@ module DatapathPipelined (
           o: memory_state.o,
           d: w_loaded_data,
           insn: memory_state.insn,
+          we: memory_state.we,
+          illegal_insn: memory_state.illegal_insn,
           cycle_status: memory_state.cycle_status
         };
       end
@@ -729,9 +763,16 @@ module DatapathPipelined (
   end
 
   // for autograder
-  assign trace_writeback_pc = writeback_state.pc;
-  assign trace_writeback_insn = writeback_state.insn;
-  assign trace_writeback_cycle_status = writeback_state.cycle_status;
+  always_comb begin
+    if (writeback_state.illegal_insn) begin
+      trace_writeback_pc = 0;
+      trace_writeback_insn = 0;
+    end else begin
+      trace_writeback_pc = writeback_state.pc;
+      trace_writeback_insn = writeback_state.insn;
+    end
+    trace_writeback_cycle_status = writeback_state.cycle_status;
+  end
 
   // send the outputs to the memory stage
 
@@ -752,10 +793,14 @@ module DatapathPipelined (
     rf_rd = writeback_state.insn[11:7];
     rf_rd_data = w_mux_writeback;
     // jmp opcode
-    if (writeback_state.insn[6:0] == 7'b1100011) begin
-      rf_we = 1'b0;
+    rf_we = writeback_state.we;
+  end
+
+  always_comb begin
+    if (writeback_state.insn[6:0] == 7'b1110011) begin
+      halt = 1'b1;
     end else begin
-      rf_we = 1'b1;
+      halt = 1'b0;
     end
   end
   
