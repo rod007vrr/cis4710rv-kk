@@ -291,7 +291,8 @@ module DatapathPipelined (
   always_comb begin
     rf_rs1 = x_insn_rs1;
     rf_rs2 = x_insn_rs2;
-
+    
+    //WD bypassing
     if (writeback_state.insn[11:7] == decode_state.insn[19:15] 
         && writeback_state.insn[11:7] != 5'b0) begin
       x_rs1_data = writeback_state.o;
