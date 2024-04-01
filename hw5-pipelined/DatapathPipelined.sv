@@ -522,13 +522,16 @@ module DatapathPipelined (
         end
       end
       OpcodeBranch: begin
+        if (insn_beq) begin
+          if (m_bypass_a == m_bypass_b) begin
+            fd_new_pc = execute_state.pc + imm_b_sext;
+            fd_clear_for_branch = 1'b1;
+          end
+        end
         if (insn_bne) begin
           if (m_bypass_a != m_bypass_b) begin
-            // try this with pc to imem in case it doesn't work with this one
             fd_new_pc = execute_state.pc + imm_b_sext;
-            //setting this so we clear out our memory
             fd_clear_for_branch = 1'b1;
-            // f_insn = 32'b0;
           end
         end
       end
