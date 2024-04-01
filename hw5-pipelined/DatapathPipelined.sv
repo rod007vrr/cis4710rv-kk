@@ -216,23 +216,7 @@ module DatapathPipelined (
   // send PC to imem
   assign pc_to_imem = f_pc_current;
 
-  logic [31:0] temp_insn;
-  logic [6:0] temp_insn_opcode;
-  logic [31:0] out_insn;
-  always_comb begin
-    temp_insn = insn_from_imem;
-    temp_insn_opcode = temp_insn[6:0];
-
-    if (temp_insn_opcode == OpcodeStore 
-    || temp_insn_opcode == OpcodeBranch
-    || temp_insn_opcode == 0'b1110011) begin
-      out_insn = {temp_insn[31:12], 5'd0, temp_insn[6:0]};
-    end else begin
-      out_insn = temp_insn;
-    end
-  end
-
-  assign f_insn = out_insn;
+  assign f_insn = insn_from_imem;
 
   // Here's how to disassemble an insn into a string you can view in GtkWave.
   // Use PREFIX to provide a 1-character tag to identify which stage the insn comes from.
@@ -499,22 +483,35 @@ module DatapathPipelined (
 
     // WX/MX BYPASSING
 
-    if (writeback_state.insn[11:7] == execute_state.insn[19:15] 
-        && writeback_state.insn[11:7] != 5'b0) begin
-      m_bypass_a = writeback_state.o;
-    end else if (memory_state.insn[11:7] == execute_state.insn[19:15] 
-        && memory_state.insn[11:7] != 5'b0) begin
+
+    if (memory_state.insn[11:7] == execute_state.insn[19:15] 
+        && memory_state.insn[11:7] != 5'b0
+        && memory_state.insn[6:0] != OpcodeStore
+        && memory_state.insn[6:0] != OpcodeBranch
+        && memory_state.insn[6:0] !=  0'b1110011) begin
       m_bypass_a = memory_state.o;
+    end else if (writeback_state.insn[11:7] == execute_state.insn[19:15] 
+        && writeback_state.insn[11:7] != 5'b0
+        && writeback_state.insn[6:0] != OpcodeStore
+        && writeback_state.insn[6:0] != OpcodeBranch
+        && writeback_state.insn[6:0] !=  0'b1110011) begin
+      m_bypass_a = writeback_state.o;
     end else begin
       m_bypass_a = execute_state.a;
     end
 
-    if (writeback_state.insn[11:7] == execute_state.insn[24:20] 
-        && writeback_state.insn[11:7] != 5'b0) begin
-      m_bypass_b = writeback_state.o;
-    end else if (memory_state.insn[11:7] == execute_state.insn[24:20] 
-        && memory_state.insn[11:7] != 5'b0) begin
+    if (memory_state.insn[11:7] == execute_state.insn[24:20] 
+        && memory_state.insn[11:7] != 5'b0
+        && memory_state.insn[6:0] != OpcodeStore
+        && memory_state.insn[6:0] != OpcodeBranch
+        && memory_state.insn[6:0] !=  0'b1110011) begin
       m_bypass_b = memory_state.o;
+    end else if (writeback_state.insn[11:7] == execute_state.insn[24:20] 
+        && writeback_state.insn[11:7] != 5'b0
+        && writeback_state.insn[6:0] != OpcodeStore
+        && writeback_state.insn[6:0] != OpcodeBranch
+        && writeback_state.insn[6:0] !=  0'b1110011) begin
+      m_bypass_b = writeback_state.o;
     end else begin
       m_bypass_b = execute_state.b;
     end
@@ -779,6 +776,8 @@ module DatapathPipelined (
     end
   end
 
+  // writing it all out
+
   // for autograder
   always_comb begin
     if (writeback_state.illegal_insn) begin
@@ -809,8 +808,8 @@ module DatapathPipelined (
   always_comb begin
     rf_rd = writeback_state.insn[11:7];
     rf_rd_data = w_mux_writeback;
-    // jmp opcode
     rf_we = writeback_state.we;
+    // jmp opcode
   end
 
   always_comb begin
