@@ -470,6 +470,8 @@ module DatapathPipelined (
 
   logic [63:0] mul_h, mul_hsu, mul_hu;
 
+  logic [`REG_SIZE] bro;
+
 
   always_comb begin
     // the problem is here because its 0 initialized 
@@ -495,6 +497,11 @@ module DatapathPipelined (
     end else begin
       m_bypass_b = execute_state.b;
     end
+
+    
+  end
+
+  always_comb begin
 
 
     illegal_insn = 1'b0;
@@ -656,6 +663,8 @@ module DatapathPipelined (
     endcase
   end
 
+  
+
   stage_memory_t memory_state;
   always_ff @(posedge clk) begin
     if (rst) begin
@@ -669,9 +678,9 @@ module DatapathPipelined (
     end else begin
       begin
         memory_state <= '{
+          o: m_output,
           pc: execute_state.pc,
           insn: execute_state.insn,
-          o: m_output,
           b: execute_state.b,
           cycle_status: execute_state.cycle_status
         };
