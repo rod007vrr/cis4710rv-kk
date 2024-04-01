@@ -460,9 +460,15 @@ module DatapathPipelined (
   assign {imm_b[12], imm_b[10:5]} = m_insn_funct7, {imm_b[4:1], imm_b[11]} = m_insn_rd, imm_b[0] = 1'b0;
   wire [`REG_SIZE] imm_b_sext = {{19{imm_b[12]}}, imm_b[12:0]};
 
+  wire [20:0] imm_j;
+  assign {imm_j[20], imm_j[10:1], imm_j[11], imm_j[19:12], imm_j[0]} = {execute_state.insn[31:12], 1'b0};
+  wire [`REG_SIZE] imm_j_sext = {{11{imm_j[20]}}, imm_j[20:0]};
+
 
   logic [`REG_SIZE] m_bypass_a;
   logic [`REG_SIZE] m_bypass_b;
+
+  logic [63:0] mul_h, mul_hsu, mul_hu;
 
 
   always_comb begin
@@ -501,7 +507,9 @@ module DatapathPipelined (
     fd_new_pc = 32'd0;
     fd_clear_for_branch = 1'b0;
 
-
+    mul_h = 64'd0;
+    mul_hsu = 64'd0;
+    mul_hu = 64'd0;
 
     case (m_insn_opcode)
       OpcodeLui: begin
@@ -514,6 +522,33 @@ module DatapathPipelined (
           cla_cin = 1'b0;
           m_output = cla_sum;
         end
+        if (insn_slti) begin
+          if ($signed(m_bypass_a) < $signed(imm_i_sext)) begin
+            m_output = 32'b1;
+          end else begin
+            m_output = 32'b0;
+          end
+        end else if (insn_sltiu) begin
+          if (m_bypass_a < imm_i_sext) begin
+            m_output = 32'b1;
+          end else begin
+            m_output = 32'b0;
+          end
+        end else if (insn_xori) begin
+          m_output = m_bypass_a ^ imm_i_sext;
+        end else if (insn_ori) begin
+          m_output = m_bypass_a | imm_i_sext;
+        end else if (insn_andi) begin
+          m_output = m_bypass_a & imm_i_sext;
+        end else if (insn_slli) begin
+          m_output = m_bypass_a << imm_shamt;
+        end else if (insn_srli) begin
+          m_output = m_bypass_a >> imm_shamt;
+        end else if (insn_srai) begin
+          m_output = $signed(m_bypass_a) >>> imm_shamt;
+        end else begin
+          illegal_insn = 1'b1;
+        end
       end
       OpcodeRegReg: begin
         if (insn_add) begin
@@ -521,6 +556,64 @@ module DatapathPipelined (
           cla_b = m_bypass_b;
           cla_cin = 1'b0;
           m_output = cla_sum;
+        end else if (insn_sub) begin
+          cla_a = m_bypass_a;
+          cla_b = ~m_bypass_b;
+          cla_cin = 1'b1;
+          m_output = cla_sum;
+        end else if (insn_sll) begin
+          m_output = m_bypass_a << (m_bypass_b[4:0]);
+        end else if (insn_slt) begin
+          if (signed'(m_bypass_a) < signed'(m_bypass_b)) begin
+            m_output = 32'b1;
+          end else begin
+            m_output = 32'b0;
+          end
+        end else if (insn_sltu) begin
+          if (m_bypass_a < m_bypass_b) begin
+            m_output = 32'b1;
+          end else begin
+            m_output = 32'b0;
+          end
+        end else if (insn_xor) begin
+          m_output = m_bypass_a ^ m_bypass_b;
+        end else if (insn_srl) begin
+          m_output = m_bypass_a >> m_bypass_b[4:0];
+        end else if (insn_sra) begin
+          m_output = $signed(m_bypass_a) >>> m_bypass_b[4:0];
+        end else if (insn_or) begin
+          m_output = m_bypass_a | m_bypass_b;
+        end else if (insn_and) begin
+          m_output = m_bypass_a & m_bypass_b;
+        end else if (insn_mul) begin
+          m_output = m_bypass_a * m_bypass_b;
+        end else if (insn_mulh) begin
+          mul_h = {{32{m_bypass_a[31]}}, m_bypass_a} * {{32{m_bypass_b[31]}}, m_bypass_b};
+          m_output = mul_h[63:32];
+        end else if (insn_mulhsu) begin
+          mul_hsu = {{32{m_bypass_a[31]}}, m_bypass_a} * {32'b0, m_bypass_b};
+          m_output = mul_hsu[63:32];
+        end else if (insn_mulhu) begin
+          mul_hu = m_bypass_a * m_bypass_b;
+          m_output = mul_hu[63:32];
+        end 
+      end
+      OpcodeJal: begin
+        if (insn_jal) begin
+          fd_new_pc = execute_state.pc + imm_j_sext;
+          fd_clear_for_branch = 1'b1;
+          m_output = execute_state.pc + 4;
+        end else begin
+          illegal_insn = 1'b1;
+        end
+      end
+      OpcodeJalr: begin
+        if (insn_jalr) begin
+          fd_new_pc = (m_bypass_a + imm_i_sext) & ~(32'h1);
+          fd_clear_for_branch = 1'b1;
+          m_output = execute_state.pc + 4;
+        end else begin
+          illegal_insn = 1'b1;
         end
       end
       OpcodeBranch: begin
@@ -529,12 +622,33 @@ module DatapathPipelined (
             fd_new_pc = execute_state.pc + imm_b_sext;
             fd_clear_for_branch = 1'b1;
           end
-        end
-        if (insn_bne) begin
+        end else if (insn_bne) begin
           if (m_bypass_a != m_bypass_b) begin
             fd_new_pc = execute_state.pc + imm_b_sext;
             fd_clear_for_branch = 1'b1;
           end
+        end else if (insn_blt) begin
+          if (signed'(m_bypass_a) < signed'(m_bypass_b)) begin
+            fd_new_pc = execute_state.pc + imm_b_sext;
+            fd_clear_for_branch = 1'b1;
+          end
+        end else if (insn_bge) begin
+          if (signed'(m_bypass_a) >= signed'(m_bypass_b)) begin
+            fd_new_pc = execute_state.pc + imm_b_sext;
+            fd_clear_for_branch = 1'b1;
+          end
+        end else if (insn_bltu) begin
+          if (m_bypass_a < m_bypass_b) begin
+            fd_new_pc = execute_state.pc + imm_b_sext;
+            fd_clear_for_branch = 1'b1;
+          end
+        end else if (insn_bgeu) begin
+          if (m_bypass_a >= m_bypass_b) begin
+            fd_new_pc = execute_state.pc + imm_b_sext;
+            fd_clear_for_branch = 1'b1;
+          end
+        end else begin
+          illegal_insn = 1'b1;
         end
       end
       default: begin
@@ -580,7 +694,7 @@ module DatapathPipelined (
   logic [`REG_SIZE] w_loaded_data;
 
   always_comb begin
-    w_loaded_data = memory_state.o;
+    w_loaded_data = 0;
   end
 
   stage_writeback_t writeback_state;
