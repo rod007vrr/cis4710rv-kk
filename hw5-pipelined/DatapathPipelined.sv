@@ -410,25 +410,35 @@ module DatapathPipelined (
   assign imm_i = execute_state.insn[31:20];
   wire [ 4:0] imm_shamt = execute_state.insn[24:20];
 
-  logic [`REG_SIZE] mx_bypass_a;
-  logic [`REG_SIZE] mx_bypass_b;
+  logic [`REG_SIZE] m_bypass_a;
+  logic [`REG_SIZE] m_bypass_b;
 
 
   always_comb begin
     // the problem is here because its 0 initialized 
-    if (memory_state.insn[11:7] == execute_state.insn[19:15] 
+
+    // WX/MX BYPASSING
+
+    if (writeback_state.insn[11:7] == execute_state.insn[19:15] 
+        && writeback_state.insn[11:7] != 5'b0) begin
+      m_bypass_a = writeback_state.o;
+    end else if (memory_state.insn[11:7] == execute_state.insn[19:15] 
         && memory_state.insn[11:7] != 5'b0) begin
-      mx_bypass_a = memory_state.o;
+      m_bypass_a = memory_state.o;
     end else begin
-      mx_bypass_a = execute_state.a;
+      m_bypass_a = execute_state.a;
     end
 
-    if (memory_state.insn[11:7] == execute_state.insn[24:20] 
+    if (writeback_state.insn[11:7] == execute_state.insn[24:20] 
+        && writeback_state.insn[11:7] != 5'b0) begin
+      m_bypass_b = writeback_state.o;
+    end else if (memory_state.insn[11:7] == execute_state.insn[24:20] 
         && memory_state.insn[11:7] != 5'b0) begin
-      mx_bypass_b = memory_state.o;
+      m_bypass_b = memory_state.o;
     end else begin
-      mx_bypass_b = execute_state.a;
+      m_bypass_b = execute_state.b;
     end
+
 
     illegal_insn = 1'b0;
     cla_a = 32'd0;
@@ -441,7 +451,7 @@ module DatapathPipelined (
       end
       OpcodeRegImm: begin
         if (insn_addi) begin 
-          cla_a = mx_bypass_a;
+          cla_a = m_bypass_a;
           cla_b = {{20{imm_i[11]}}, imm_i[11:0]};
           cla_cin = 1'b0;
           m_output = cla_sum;
@@ -449,8 +459,8 @@ module DatapathPipelined (
       end
       OpcodeRegReg: begin
         if (insn_add) begin
-          cla_a = mx_bypass_a;
-          cla_b = mx_bypass_b;
+          cla_a = m_bypass_a;
+          cla_b = m_bypass_b;
           cla_cin = 1'b0;
           m_output = cla_sum;
         end
@@ -496,7 +506,7 @@ module DatapathPipelined (
   logic [`REG_SIZE] w_loaded_data;
 
   always_comb begin
-    w_loaded_data = load_data_from_dmem;
+    w_loaded_data = memory_state.o;
   end
 
   stage_writeback_t writeback_state;
@@ -531,16 +541,15 @@ module DatapathPipelined (
 
   assign {w_insn_funct7, w_insn_rs2, w_insn_rs1, w_insn_funct3, w_insn_rd, w_insn_opcode} = writeback_state.insn;
 
+  logic [`REG_SIZE] w_mux_writeback;
+
+  assign w_mux_writeback = writeback_state.o;
+
   always_comb begin
     rf_rd = writeback_state.insn[11:7];
-    rf_rd_data = writeback_state.o;
+    rf_rd_data = w_mux_writeback;
     rf_we = 1'b1;
   end
-
-
-
-
-
   
 
 endmodule
