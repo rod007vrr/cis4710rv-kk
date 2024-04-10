@@ -198,6 +198,8 @@ module DatapathPipelined (
   logic fd_clear_for_branch; // this is used when we clear the whole thing for branch
   logic [`REG_SIZE] fd_new_pc; //set when we branch
 
+  logic stall_for_load;
+
   // program counter
   always_ff @(posedge clk) begin
     if (rst) begin
@@ -208,6 +210,9 @@ module DatapathPipelined (
       f_cycle_status <= CYCLE_NO_STALL;
       if (fd_clear_for_branch) begin
         f_pc_current <= fd_new_pc;
+      end else if (stall_for_load) begin
+        // f_cycle_status <= CYCLE_LOAD2USE;
+        f_pc_current <= f_pc_current;
       end else begin
         f_pc_current <= f_pc_current + 4;
       end
@@ -248,6 +253,8 @@ module DatapathPipelined (
           insn: 0,
           cycle_status: CYCLE_TAKEN_BRANCH
         };
+      end else if (stall_for_load) begin
+        decode_state <= decode_state;
       end else begin
         decode_state <= '{
           pc: f_pc_current,
@@ -348,6 +355,14 @@ module DatapathPipelined (
             b: 0,
             insn: 0,
             cycle_status: CYCLE_TAKEN_BRANCH
+          };
+        end else if (stall_for_load) begin
+          execute_state <= '{
+            pc: 0,
+            a: 0,
+            b: 0,
+            insn: 0,
+            cycle_status: CYCLE_LOAD2USE
           };
         end else begin 
           execute_state <= '{
@@ -495,7 +510,7 @@ module DatapathPipelined (
         && writeback_state.insn[6:0] != OpcodeStore
         && writeback_state.insn[6:0] != OpcodeBranch
         && writeback_state.insn[6:0] !=  0'b1110011) begin
-      m_bypass_a = writeback_state.o;
+      m_bypass_a = w_mux_writeback;
     end else begin
       m_bypass_a = execute_state.a;
     end
@@ -511,7 +526,7 @@ module DatapathPipelined (
         && writeback_state.insn[6:0] != OpcodeStore
         && writeback_state.insn[6:0] != OpcodeBranch
         && writeback_state.insn[6:0] !=  0'b1110011) begin
-      m_bypass_b = writeback_state.o;
+      m_bypass_b = w_mux_writeback;
     end else begin
       m_bypass_b = execute_state.b;
     end
@@ -538,6 +553,8 @@ module DatapathPipelined (
     mul_hu = 64'd0;
 
     m_we = 1'b0;
+
+    stall_for_load = 1'b0;
 
     case (m_insn_opcode)
       OpcodeLui: begin
@@ -630,6 +647,19 @@ module DatapathPipelined (
         end else begin
           m_we = 1'b0;
           illegal_insn = 1'b1;
+        end
+      end
+      OpcodeLoad: begin
+        m_we = 1'b1;
+        //TODO : may need to go in and also make sure that RS2 is being used and isn't part of an IMM
+        //IE only check RS2 on R, S, B type insns
+        if (execute_state.insn[11:7] != 5'b0 
+            && (decode_state.insn[19:15] == execute_state.insn[11:7]
+            || decode_state[24:20] == execute_state[11:7])) begin
+          stall_for_load = 1'b1;
+        end
+        if (insn_lw) begin
+          m_output = m_bypass_a + imm_i_sext;
         end
       end
       OpcodeJal: begin
@@ -744,9 +774,12 @@ module DatapathPipelined (
   /*****************/
 
   logic [`REG_SIZE] w_loaded_data;
+  logic [`REG_SIZE] addr_ld;
 
   always_comb begin
-    w_loaded_data = 0;
+    addr_ld = memory_state.o;
+    addr_to_dmem = {addr_ld[31:2], 2'b00};
+    w_loaded_data = load_data_from_dmem[31:0];
   end
 
   stage_writeback_t writeback_state;
@@ -803,9 +836,16 @@ module DatapathPipelined (
 
   logic [`REG_SIZE] w_mux_writeback;
 
-  assign w_mux_writeback = writeback_state.o;
+  // assign w_mux_writeback = writeback_state.o;
 
   always_comb begin
+
+    if (writeback_state.insn[6:0] == 7'b0_000_011) begin
+      w_mux_writeback = writeback_state.d;
+    end else begin
+      w_mux_writeback = writeback_state.o;
+    end
+
     rf_rd = writeback_state.insn[11:7];
     rf_rd_data = w_mux_writeback;
     rf_we = writeback_state.we;
