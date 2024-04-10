@@ -655,7 +655,9 @@ module DatapathPipelined (
         //IE only check RS2 on R, S, B type insns
         if (execute_state.insn[11:7] != 5'b0 
             && (decode_state.insn[19:15] == execute_state.insn[11:7]
-            || decode_state[24:20] == execute_state[11:7])) begin
+            || decode_state[24:20] == execute_state[11:7])
+            // Making sure that we are not on a store instruction
+          && decode_state.insn[6:0] != OpcodeStore ) begin
           stall_for_load = 1'b1;
         end
         if (insn_lw) begin
