@@ -125,6 +125,7 @@ typedef struct packed {
   logic [`REG_SIZE] b;
   logic [`INSN_SIZE] insn;
   logic we;
+  logic [3:0] data_we;
   logic illegal_insn;
   cycle_status_e cycle_status;
 } stage_memory_t;
@@ -134,8 +135,8 @@ typedef struct packed {
   logic [`REG_SIZE] o;
   logic [`REG_SIZE] d;
   logic [`INSN_SIZE] insn;
-  logic illegal_insn;
   logic we;
+  logic illegal_insn;
   cycle_status_e cycle_status;
 } stage_writeback_t;
 
@@ -462,7 +463,11 @@ module DatapathPipelined (
   assign {imm_j[20], imm_j[10:1], imm_j[11], imm_j[19:12], imm_j[0]} = {
     execute_state.insn[31:12], 1'b0
   };
-  wire  [`REG_SIZE] imm_j_sext = {{11{imm_j[20]}}, imm_j[20:0]};
+  wire [`REG_SIZE] imm_j_sext = {{11{imm_j[20]}}, imm_j[20:0]};
+
+  wire [11:0] imm_s;
+  assign imm_s[11:5] = execute_state.insn[31:25], imm_s[4:0] = execute_state.insn[11:7];
+  wire  [`REG_SIZE] imm_s_sext = {{20{imm_s[11]}}, imm_s[11:0]};
 
 
   logic [`REG_SIZE] m_bypass_a;
@@ -471,6 +476,8 @@ module DatapathPipelined (
   logic [63:0] mul_h, mul_hsu, mul_hu;
 
   logic m_we;
+
+  logic [3:0] m_data_we;
 
 
   always_comb begin
@@ -533,6 +540,7 @@ module DatapathPipelined (
     mul_hu = 64'd0;
 
     m_we = 1'b0;
+    m_data_we = 4'b0;
 
     stall_for_load = 1'b0;
 
@@ -635,9 +643,12 @@ module DatapathPipelined (
         //IE only check RS2 on R, S, B type insns
         if (execute_state.insn[11:7] != 5'b0 
             && (decode_state.insn[19:15] == execute_state.insn[11:7]
-            || decode_state[24:20] == execute_state[11:7])
+            || decode_state.insn[24:20] == execute_state.insn[11:7])
             // Making sure that we are not on a store instruction
-            && decode_state.insn[6:0] != OpcodeStore) begin
+            && (decode_state.insn[6:0] != OpcodeStore
+            || (decode_state.insn[6:0] == OpcodeStore 
+            && decode_state.insn[24:20] == execute_state.insn[11:7])
+            )) begin
           stall_for_load = 1'b1;
         end
         if (insn_lw) begin
@@ -708,6 +719,39 @@ module DatapathPipelined (
           illegal_insn = 1'b1;
         end
       end
+      OpcodeStore: begin
+        m_output = m_bypass_a + imm_s_sext;
+        if (insn_sb) begin
+          case (m_output[1:0])
+            2'b00: begin
+              m_data_we = 4'b0001;
+            end
+            2'b01: begin
+              m_data_we = 4'b0010;
+            end
+            2'b10: begin
+              m_data_we = 4'b0100;
+            end
+            2'b11: begin
+              m_data_we = 4'b1000;
+            end
+          endcase
+        end else if (insn_sh) begin
+          m_data_we = 4'b0011;
+          case (m_output[1])
+            1'b0: begin
+              m_data_we = 4'b0011;
+            end
+            1'b1: begin
+              m_data_we = 4'b1100;
+            end
+          endcase
+        end else if (insn_sw) begin
+          m_data_we = 4'b1111;
+        end else begin
+          illegal_insn = 1'b1;
+        end
+      end
       default: begin
         m_we = 1'b0;
         illegal_insn = 1'b1;
@@ -726,6 +770,7 @@ module DatapathPipelined (
           o: 0,
           b: 0,
           we: 0,
+          data_we: 0,
           illegal_insn: 0,
           cycle_status: CYCLE_RESET
       };
@@ -735,8 +780,11 @@ module DatapathPipelined (
             o: m_output,
             pc: execute_state.pc,
             insn: execute_state.insn,
-            b: execute_state.b,
+            // b: execute_state.b,
+            b:
+            m_bypass_b,
             we: m_we,
+            data_we: m_data_we,
             illegal_insn: illegal_insn,
             cycle_status: execute_state.cycle_status
         };
@@ -758,11 +806,63 @@ module DatapathPipelined (
   logic [`REG_SIZE] w_loaded_data;
   logic [`REG_SIZE] addr_ld;
 
+
+
+
+
   always_comb begin
+    // setting up right mem address
     addr_ld = memory_state.o;
     addr_to_dmem = {addr_ld[31:2], 2'b00};
+    // loading data from memory
     w_loaded_data = load_data_from_dmem[31:0];
   end
+
+  logic [`REG_SIZE] w_bypass_mux_WM;
+
+  always_comb begin
+    if (memory_state.insn[24:20] == writeback_state.insn[11:7] 
+        && memory_state.insn[24:20] != 5'b0) begin
+      w_bypass_mux_WM = w_mux_writeback;
+    end else begin
+      w_bypass_mux_WM = memory_state.b;
+    end
+  end
+
+  // memory write logic
+  begin
+    always_comb begin
+      store_data_to_dmem = 32'b0;
+      case (memory_state.data_we)
+        4'b0001: begin
+          store_data_to_dmem[7:0] = w_bypass_mux_WM[7:0];
+        end
+        4'b0010: begin
+          store_data_to_dmem[15:8] = w_bypass_mux_WM[7:0];
+        end
+        4'b0100: begin
+          store_data_to_dmem[23:16] = w_bypass_mux_WM[7:0];
+        end
+        4'b1000: begin
+          store_data_to_dmem[31:24] = w_bypass_mux_WM[7:0];
+        end
+        4'b0011: begin
+          store_data_to_dmem[15:0] = w_bypass_mux_WM[15:0];
+        end
+        4'b1100: begin
+          store_data_to_dmem[31:16] = w_bypass_mux_WM[15:0];
+        end
+        4'b1111: begin
+          store_data_to_dmem = w_bypass_mux_WM;
+        end
+        default: begin
+          store_data_to_dmem = 32'b0;
+        end
+      endcase
+      store_we_to_dmem = memory_state.data_we;
+    end
+  end
+
 
   stage_writeback_t writeback_state;
   always_ff @(posedge clk) begin

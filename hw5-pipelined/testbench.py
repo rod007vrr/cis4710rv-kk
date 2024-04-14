@@ -423,7 +423,7 @@ async def testWMAddress(dut):
     loadValue = 0x2083
 
     await ClockCycles(dut.clk, 5) # sb in X stage
-    assert dut.the_mem.mem[int(loadValue / 4)].value == 0, f'failed at cycle {dut.datapath.cycles_current.value.integer}'
+    assert dut.the_mem.mem[int(loadValue / 4)].value == 0, f'failed at bruh cycle {dut.datapath.cycles_current.value.integer}'
     await ClockCycles(dut.clk, 1) # sb reaches M stage, writes to memory
     assert dut.the_mem.mem[int(loadValue / 4)].value == 0x8300_0000, f'failed at cycle {dut.datapath.cycles_current.value.integer}'
     pass
