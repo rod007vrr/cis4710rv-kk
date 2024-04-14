@@ -53,9 +53,9 @@ module RegFile (
 );
   localparam int NumRegs = 32;
   logic [`REG_SIZE] regs[NumRegs];
-  assign regs[0]  = 32'd0;  
-  assign rs1_data = regs[rs1];  
-  assign rs2_data = regs[rs2];  
+  assign regs[0]  = 32'd0;
+  assign rs1_data = regs[rs1];
+  assign rs2_data = regs[rs2];
   always_ff @(posedge clk) begin
     if (rst) begin
       for (int i = 1; i < NumRegs; i = i + 1) begin
@@ -99,9 +99,9 @@ typedef enum {
   /** a stall cycle that arose from a load-to-use stall */
   CYCLE_LOAD2USE = 8,
   /** a stall cycle that arose from a div/rem-to-use stall */
-  CYCLE_DIV2USE = 16,
+  CYCLE_DIV2USE  = 16,
   /** a stall cycle that arose from a fence.i insn */
-  CYCLE_FENCEI = 32
+  CYCLE_FENCEI   = 32
 } cycle_status_e;
 
 /** state at the start of Decode stage */
@@ -195,15 +195,15 @@ module DatapathPipelined (
   wire [`REG_SIZE] f_insn;
   cycle_status_e f_cycle_status;
 
-  logic fd_clear_for_branch; // this is used when we clear the whole thing for branch
-  logic [`REG_SIZE] fd_new_pc; //set when we branch
+  logic fd_clear_for_branch;  // this is used when we clear the whole thing for branch
+  logic [`REG_SIZE] fd_new_pc;  //set when we branch
 
   logic stall_for_load;
 
   // program counter
   always_ff @(posedge clk) begin
     if (rst) begin
-      f_pc_current <= 32'd0;
+      f_pc_current   <= 32'd0;
       // NB: use CYCLE_NO_STALL since this is the value that will persist after the last reset cycle
       f_cycle_status <= CYCLE_NO_STALL;
     end else begin
@@ -241,26 +241,14 @@ module DatapathPipelined (
   stage_decode_t decode_state;
   always_ff @(posedge clk) begin
     if (rst) begin
-      decode_state <= '{
-        pc: 0,
-        insn: 0,
-        cycle_status: CYCLE_RESET
-      };
+      decode_state <= '{pc: 0, insn: 0, cycle_status: CYCLE_RESET};
     end else begin
       if (fd_clear_for_branch) begin
-        decode_state <= '{
-          pc: 0,
-          insn: 0,
-          cycle_status: CYCLE_TAKEN_BRANCH
-        };
+        decode_state <= '{pc: 0, insn: 0, cycle_status: CYCLE_TAKEN_BRANCH};
       end else if (stall_for_load) begin
         decode_state <= decode_state;
       end else begin
-        decode_state <= '{
-          pc: f_pc_current,
-          insn: f_insn,
-          cycle_status: f_cycle_status
-        };
+        decode_state <= '{pc: f_pc_current, insn: f_insn, cycle_status: f_cycle_status};
       end
     end
   end
@@ -318,7 +306,7 @@ module DatapathPipelined (
   always_comb begin
     rf_rs1 = x_insn_rs1;
     rf_rs2 = x_insn_rs2;
-    
+
     //WD bypassing
     if (writeback_state.insn[11:7] == decode_state.insn[19:15] 
         && writeback_state.insn[11:7] != 5'b0) begin
@@ -339,38 +327,26 @@ module DatapathPipelined (
   stage_execute_t execute_state;
   always_ff @(posedge clk) begin
     if (rst) begin
-      execute_state <= '{
-        pc: 0,
-        insn: 0,
-        a: 0,
-        b: 0,
-        cycle_status: CYCLE_RESET
-      };
+      execute_state <= '{pc: 0, insn: 0, a: 0, b: 0, cycle_status: CYCLE_RESET};
     end else begin
       begin
-        if (fd_clear_for_branch) begin 
+        if (fd_clear_for_branch) begin
           execute_state <= '{
-            pc: fd_new_pc,
-            a: 0,
-            b: 0,
-            insn: 0,
-            cycle_status: CYCLE_TAKEN_BRANCH
+              pc: fd_new_pc,
+              a: 0,
+              b: 0,
+              insn: 0,
+              cycle_status: CYCLE_TAKEN_BRANCH
           };
         end else if (stall_for_load) begin
+          execute_state <= '{pc: 0, a: 0, b: 0, insn: 0, cycle_status: CYCLE_LOAD2USE};
+        end else begin
           execute_state <= '{
-            pc: 0,
-            a: 0,
-            b: 0,
-            insn: 0,
-            cycle_status: CYCLE_LOAD2USE
-          };
-        end else begin 
-          execute_state <= '{
-            pc: decode_state.pc,
-            a: x_rs1_data,
-            b: x_rs2_data,
-            insn: decode_state.insn,
-            cycle_status: decode_state.cycle_status
+              pc: decode_state.pc,
+              a: x_rs1_data,
+              b: x_rs2_data,
+              insn: decode_state.insn,
+              cycle_status: decode_state.cycle_status
           };
         end
       end
@@ -384,7 +360,7 @@ module DatapathPipelined (
       .disasm(x_disasm)
   );
 
-  
+
   /*****************/
   /* MEMORY STAGE */
   /*****************/
@@ -471,18 +447,22 @@ module DatapathPipelined (
   assign m_insn_rd = execute_state.insn[11:7];
 
   //this block right here is kind of our ALU if you think about it
-  wire [11:0] imm_i; 
+  wire [11:0] imm_i;
   assign imm_i = execute_state.insn[31:20];
   wire [ 4:0] imm_shamt = execute_state.insn[24:20];
   wire [31:0] imm_i_sext = {{20{imm_i[11]}}, imm_i};
 
   wire [12:0] imm_b;
-  assign {imm_b[12], imm_b[10:5]} = m_insn_funct7, {imm_b[4:1], imm_b[11]} = m_insn_rd, imm_b[0] = 1'b0;
+  assign {imm_b[12], imm_b[10:5]} = m_insn_funct7,
+      {imm_b[4:1], imm_b[11]} = m_insn_rd,
+      imm_b[0] = 1'b0;
   wire [`REG_SIZE] imm_b_sext = {{19{imm_b[12]}}, imm_b[12:0]};
 
   wire [20:0] imm_j;
-  assign {imm_j[20], imm_j[10:1], imm_j[11], imm_j[19:12], imm_j[0]} = {execute_state.insn[31:12], 1'b0};
-  wire [`REG_SIZE] imm_j_sext = {{11{imm_j[20]}}, imm_j[20:0]};
+  assign {imm_j[20], imm_j[10:1], imm_j[11], imm_j[19:12], imm_j[0]} = {
+    execute_state.insn[31:12], 1'b0
+  };
+  wire  [`REG_SIZE] imm_j_sext = {{11{imm_j[20]}}, imm_j[20:0]};
 
 
   logic [`REG_SIZE] m_bypass_a;
@@ -563,7 +543,7 @@ module DatapathPipelined (
       end
       OpcodeRegImm: begin
         m_we = 1'b1;
-        if (insn_addi) begin 
+        if (insn_addi) begin
           cla_a = m_bypass_a;
           cla_b = imm_i_sext;
           cla_cin = 1'b0;
@@ -639,10 +619,10 @@ module DatapathPipelined (
           mul_h = {{32{m_bypass_a[31]}}, m_bypass_a} * {{32{m_bypass_b[31]}}, m_bypass_b};
           m_output = mul_h[63:32];
         end else if (insn_mulhsu) begin
-          mul_hsu = {{32{m_bypass_a[31]}}, m_bypass_a} * {32'b0, m_bypass_b};
+          mul_hsu  = {{32{m_bypass_a[31]}}, m_bypass_a} * {32'b0, m_bypass_b};
           m_output = mul_hsu[63:32];
         end else if (insn_mulhu) begin
-          mul_hu = m_bypass_a * m_bypass_b;
+          mul_hu   = m_bypass_a * m_bypass_b;
           m_output = mul_hu[63:32];
         end else begin
           m_we = 1'b0;
@@ -657,7 +637,7 @@ module DatapathPipelined (
             && (decode_state.insn[19:15] == execute_state.insn[11:7]
             || decode_state[24:20] == execute_state[11:7])
             // Making sure that we are not on a store instruction
-          && decode_state.insn[6:0] != OpcodeStore ) begin
+            && decode_state.insn[6:0] != OpcodeStore) begin
           stall_for_load = 1'b1;
         end
         if (insn_lw) begin
@@ -729,36 +709,36 @@ module DatapathPipelined (
         end
       end
       default: begin
-          m_we = 1'b0;
-          illegal_insn = 1'b1;
-        end
+        m_we = 1'b0;
+        illegal_insn = 1'b1;
+      end
     endcase
   end
 
-  
+
 
   stage_memory_t memory_state;
   always_ff @(posedge clk) begin
     if (rst) begin
       memory_state <= '{
-        pc: 0,
-        insn: 0,
-        o: 0,
-        b: 0,
-        we: 0,
-        illegal_insn: 0,
-        cycle_status: CYCLE_RESET
+          pc: 0,
+          insn: 0,
+          o: 0,
+          b: 0,
+          we: 0,
+          illegal_insn: 0,
+          cycle_status: CYCLE_RESET
       };
     end else begin
       begin
         memory_state <= '{
-          o: m_output,
-          pc: execute_state.pc,
-          insn: execute_state.insn,
-          b: execute_state.b,
-          we: m_we,
-          illegal_insn: illegal_insn,
-          cycle_status: execute_state.cycle_status
+            o: m_output,
+            pc: execute_state.pc,
+            insn: execute_state.insn,
+            b: execute_state.b,
+            we: m_we,
+            illegal_insn: illegal_insn,
+            cycle_status: execute_state.cycle_status
         };
       end
     end
@@ -788,24 +768,24 @@ module DatapathPipelined (
   always_ff @(posedge clk) begin
     if (rst) begin
       writeback_state <= '{
-        pc: 0,
-        insn: 0,
-        o: 0,
-        d: 0,
-        we: 0,
-        illegal_insn: 0,
-        cycle_status: CYCLE_RESET
+          pc: 0,
+          insn: 0,
+          o: 0,
+          d: 0,
+          we: 0,
+          illegal_insn: 0,
+          cycle_status: CYCLE_RESET
       };
     end else begin
       begin
         writeback_state <= '{
-          pc: memory_state.pc,
-          o: memory_state.o,
-          d: w_loaded_data,
-          insn: memory_state.insn,
-          we: memory_state.we,
-          illegal_insn: memory_state.illegal_insn,
-          cycle_status: memory_state.cycle_status
+            pc: memory_state.pc,
+            o: memory_state.o,
+            d: w_loaded_data,
+            insn: memory_state.insn,
+            we: memory_state.we,
+            illegal_insn: memory_state.illegal_insn,
+            cycle_status: memory_state.cycle_status
         };
       end
     end
@@ -816,10 +796,10 @@ module DatapathPipelined (
   // for autograder
   always_comb begin
     if (writeback_state.illegal_insn) begin
-      trace_writeback_pc = 0;
+      trace_writeback_pc   = 0;
       trace_writeback_insn = 0;
     end else begin
-      trace_writeback_pc = writeback_state.pc;
+      trace_writeback_pc   = writeback_state.pc;
       trace_writeback_insn = writeback_state.insn;
     end
     trace_writeback_cycle_status = writeback_state.cycle_status;
@@ -837,8 +817,6 @@ module DatapathPipelined (
   assign {w_insn_funct7, w_insn_rs2, w_insn_rs1, w_insn_funct3, w_insn_rd, w_insn_opcode} = writeback_state.insn;
 
   logic [`REG_SIZE] w_mux_writeback;
-
-  // assign w_mux_writeback = writeback_state.o;
 
   always_comb begin
 
@@ -861,7 +839,7 @@ module DatapathPipelined (
       halt = 1'b0;
     end
   end
-  
+
 
 endmodule
 
@@ -940,8 +918,8 @@ endmodule
 
 /* This design has just one clock for both processor and memory. */
 module RiscvProcessor (
-    input  wire  clk,
-    input  wire  rst,
+    input wire clk,
+    input wire rst,
     output logic halt,
     output wire [`REG_SIZE] trace_writeback_pc,
     output wire [`INSN_SIZE] trace_writeback_insn,
