@@ -437,6 +437,17 @@ module DatapathPipelined (
       .sum(cla_sum)
   );
 
+  logic [`REG_SIZE] dividend, divisor, remainder, quotient;
+
+  divider_unsigned_pipelined divider_inst (
+      .clk(clk),
+      .rst(rst),
+      .i_dividend(dividend),
+      .i_divisor(divisor),
+      .o_quotient(quotient),
+      .o_remainder(remainder)
+  );
+
   //calculating the output
   logic [`REG_SIZE] m_output;
   logic illegal_insn;
@@ -539,8 +550,12 @@ module DatapathPipelined (
     mul_hsu = 64'd0;
     mul_hu = 64'd0;
 
+    dividend = 32'd0;
+    divisor = 32'd0;
+
     m_we = 1'b0;
     m_data_we = 4'b0;
+
 
     stall_for_load = 1'b0;
 
@@ -632,6 +647,46 @@ module DatapathPipelined (
         end else if (insn_mulhu) begin
           mul_hu   = m_bypass_a * m_bypass_b;
           m_output = mul_hu[63:32];
+        end else if (insn_div) begin
+          if (m_bypass_a[31]) begin
+            dividend = ~m_bypass_a + 1;
+          end else begin
+            dividend = m_bypass_a;
+          end
+          if (m_bypass_b[31]) begin
+            divisor = ~m_bypass_b + 1;
+          end else begin
+            divisor = m_bypass_b;
+          end
+          if (!(m_bypass_a[31] ^ m_bypass_b[31]) || (m_bypass_b == 'd0)) begin
+            m_output = 32'b1;
+          end else begin
+            m_output = 32'b0;
+          end
+        end else if (insn_divu) begin
+          dividend = m_bypass_a;
+          divisor  = m_bypass_b;
+          m_output = 32'b1;
+        end else if (insn_rem) begin
+          if (m_bypass_a[31]) begin
+            dividend = ~m_bypass_a + 1;
+          end else begin
+            dividend = m_bypass_a;
+          end
+          if (m_bypass_b[31]) begin
+            divisor = ~m_bypass_b + 1;
+          end else begin
+            divisor = m_bypass_b;
+          end
+          if (!(m_bypass_a[31] ^ m_bypass_b[31]) || (m_bypass_b == 'd0)) begin
+            m_output = 32'b1;
+          end else begin
+            m_output = 32'b0;
+          end
+        end else if (insn_remu) begin
+          dividend = m_bypass_a;
+          divisor  = m_bypass_b;
+          m_output = 32'b1;
         end else begin
           m_we = 1'b0;
           illegal_insn = 1'b1;
@@ -922,6 +977,22 @@ module DatapathPipelined (
 
     if (writeback_state.insn[6:0] == 7'b0_000_011) begin
       w_mux_writeback = writeback_state.d;
+    end else if (
+      writeback_state.insn[6:0] == OpcodeRegReg
+        && (w_insn_funct3 == 3'b100 || w_insn_funct3 == 3'b101)) begin
+      if (memory_state.o == 32'b1) begin
+        w_mux_writeback = quotient;
+      end else begin
+        w_mux_writeback = ~quotient + 'd1;
+      end
+    end else if (
+      writeback_state.insn[6:0] == OpcodeRegReg
+        && (w_insn_funct3 == 3'b110 || w_insn_funct3 == 3'b111)) begin
+      if (memory_state.o == 32'b1) begin
+        w_mux_writeback = remainder;
+      end else begin
+        w_mux_writeback = ~remainder + 'd1;
+      end
     end else begin
       w_mux_writeback = writeback_state.o;
     end
