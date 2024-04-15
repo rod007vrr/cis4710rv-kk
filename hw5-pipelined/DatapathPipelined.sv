@@ -977,6 +977,8 @@ module DatapathPipelined (
 
     if (writeback_state.insn[6:0] == 7'b0_000_011) begin
       w_mux_writeback = writeback_state.d;
+      // In theory this should exist to to get the right results 
+      //from the division into the memory but it works without it? not sure might be worth looking into
       // end else if (
       //   writeback_state.insn[6:0] == OpcodeRegReg
       //     && (w_insn_funct3 == 3'b100 || w_insn_funct3 == 3'b101)) begin
