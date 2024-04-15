@@ -977,22 +977,22 @@ module DatapathPipelined (
 
     if (writeback_state.insn[6:0] == 7'b0_000_011) begin
       w_mux_writeback = writeback_state.d;
-    end else if (
-      writeback_state.insn[6:0] == OpcodeRegReg
-        && (w_insn_funct3 == 3'b100 || w_insn_funct3 == 3'b101)) begin
-      if (memory_state.o == 32'b1) begin
-        w_mux_writeback = quotient;
-      end else begin
-        w_mux_writeback = ~quotient + 'd1;
-      end
-    end else if (
-      writeback_state.insn[6:0] == OpcodeRegReg
-        && (w_insn_funct3 == 3'b110 || w_insn_funct3 == 3'b111)) begin
-      if (memory_state.o == 32'b1) begin
-        w_mux_writeback = remainder;
-      end else begin
-        w_mux_writeback = ~remainder + 'd1;
-      end
+      // end else if (
+      //   writeback_state.insn[6:0] == OpcodeRegReg
+      //     && (w_insn_funct3 == 3'b100 || w_insn_funct3 == 3'b101)) begin
+      //   if (memory_state.o == 32'b1) begin
+      //     w_mux_writeback = quotient;
+      //   end else begin
+      //     w_mux_writeback = ~quotient + 'd1;
+      //   end
+      // end else if (
+      //   writeback_state.insn[6:0] == OpcodeRegReg
+      //     && (w_insn_funct3 == 3'b110 || w_insn_funct3 == 3'b111)) begin
+      //   if (memory_state.o == 32'b1) begin
+      //     w_mux_writeback = remainder;
+      //   end else begin
+      //     w_mux_writeback = ~remainder + 'd1;
+      //   end
     end else begin
       w_mux_writeback = writeback_state.o;
     end
