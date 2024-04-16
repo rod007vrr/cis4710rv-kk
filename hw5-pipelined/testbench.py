@@ -456,6 +456,22 @@ async def testDiv(dut):
     assert dut.datapath.rf.regs[2].value == 1, f'failed at cycle {dut.datapath.cycles_current.value.integer}'
 
 @cocotb.test(skip='RVTEST_ALUBR' in os.environ)
+async def testDivRod(dut):
+    "Run div insn"
+    asm(dut, '''
+        li x3, 2
+        li x1, 20
+        li x2, 6
+        addi x4, x0, 0
+        div x14,x1,x2
+        addi x4, x0, 20
+        ''')
+    await preTestSetup(dut)
+
+    await ClockCycles(dut.clk, 12)
+    assert dut.datapath.rf.regs[14].value == 3, f'failed at cycle {dut.datapath.cycles_current.value.integer}'
+
+@cocotb.test(skip='RVTEST_ALUBR' in os.environ)
 async def testDivUse(dut):
     "Run div + dependent insn"
     asm(dut, '''
