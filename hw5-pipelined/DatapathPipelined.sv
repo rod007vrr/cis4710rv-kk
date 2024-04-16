@@ -1009,7 +1009,46 @@ module DatapathPipelined (
   always_comb begin
 
     if (writeback_state.insn[6:0] == 7'b0_000_011) begin
-      w_mux_writeback = writeback_state.d;
+      case (w_insn_funct3) 
+        3'b000: begin
+          // lb
+          case (writeback_state.o[1:0])
+            2'b00: w_mux_writeback = {{24{writeback_state.d[7]}}, writeback_state.d[7:0]};
+            2'b01: w_mux_writeback = {{24{writeback_state.d[15]}}, writeback_state.d[15:8]};
+            2'b10: w_mux_writeback = {{24{writeback_state.d[23]}}, writeback_state.d[23:16]};
+            2'b11: w_mux_writeback = {{24{writeback_state.d[31]}}, writeback_state.d[31:24]};
+          endcase
+        end
+        3'b001: begin
+          // lh
+          case (writeback_state.o[1])
+            1'b0: w_mux_writeback = {{16{writeback_state.d[15]}}, writeback_state.d[15:0]};
+            1'b1: w_mux_writeback = {{16{writeback_state.d[31]}}, writeback_state.d[31:16]};
+          endcase
+        end
+        3'b010: begin
+          w_mux_writeback = writeback_state.d;
+        end
+        3'b100: begin
+          // lbu
+          case (writeback_state.o[1:0])
+            2'b00: w_mux_writeback = {24'b0, writeback_state.d[7:0]};
+            2'b01: w_mux_writeback = {24'b0, writeback_state.d[15:8]};
+            2'b10: w_mux_writeback = {24'b0, writeback_state.d[23:16]};
+            2'b11: w_mux_writeback = {24'b0, writeback_state.d[31:24]};
+          endcase
+        end
+        3'b101: begin
+          // lhu
+          case (writeback_state.o[1])
+            1'b0: w_mux_writeback = {16'b0, writeback_state.d[15:0]};
+            1'b1: w_mux_writeback = {16'b0, writeback_state.d[31:16]};
+          endcase
+        end
+        default : begin
+          w_mux_writeback = 0;
+        end
+      endcase
       // In theory this should exist to to get the right results 
       //from the division into the memory but it works without it? not sure might be worth looking into
       // end else if (
