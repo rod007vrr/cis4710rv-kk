@@ -321,14 +321,14 @@ module DatapathPipelined (
     //WD bypassing
     if (writeback_state.insn[11:7] == decode_state.insn[19:15] 
         && writeback_state.insn[11:7] != 5'b0) begin
-      x_rs1_data = writeback_state.o;
+      x_rs1_data = w_mux_writeback;
     end else begin
       x_rs1_data = rf_rs1_data;
     end
 
     if (writeback_state.insn[11:7] == decode_state.insn[24:20] 
         && writeback_state.insn[11:7] != 5'b0) begin
-      x_rs2_data = writeback_state.o;
+      x_rs2_data = w_mux_writeback;
     end else begin
       x_rs2_data = rf_rs2_data;
     end
@@ -708,12 +708,12 @@ module DatapathPipelined (
       end
       OpcodeLoad: begin
         m_we = 1'b1;
-        //TODO : may need to go in and also make sure that RS2 is being used and isn't part of an IMM
-        //IE only check RS2 on R, S, B type insns
         if (execute_state.insn[11:7] != 5'b0 
             && (decode_state.insn[19:15] == execute_state.insn[11:7]
-            || decode_state.insn[24:20] == execute_state.insn[11:7])
-            // Making sure that we are not on a store instruction
+            || (decode_state.insn[24:20] == execute_state.insn[11:7]
+                && (decode_state.insn[6:0] == 7'h33
+                  || decode_state.insn[6:0] == 7'h23
+                  || decode_state.insn[6:0] == 7'h63)))
             && (decode_state.insn[6:0] != OpcodeStore
             || (decode_state.insn[6:0] == OpcodeStore 
             && decode_state.insn[24:20] == execute_state.insn[11:7])
