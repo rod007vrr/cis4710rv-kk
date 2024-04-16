@@ -373,29 +373,6 @@ async def testLoadUse1(dut):
     assert dut.datapath.rf.regs[2].value == 0x0000_2083, f'failed at cycle {dut.datapath.cycles_current.value.integer}'
     pass
 
-# @cocotb.test(skip='RVTEST_ALUBR' in os.environ)
-# async def testRod(dut):
-#     "load to use in rs1"
-#     asm(dut, '''
-#         li x14, 0
-#         lui x14,0xff0 # loads bits of the lw insn itself
-#         add x14,x14,255
-
-#         li x7, 0
-#         lui x7,0xff0 # loads bits of the lw insn itself
-#         add x7,x7,255
-#         beq x14,x7,target
-#         beq x0,x0,target2
-#         target: addi x1,x0,1
-#         beq x0,x0,target2
-#         target2: addi x0,x0,0
-#         ''')
-#     await preTestSetup(dut)
-
-#     await ClockCycles(dut.clk, 20)
-#     assert dut.datapath.rf.regs[1].value == 0x0000_0001, f'failed at cycle {dut.datapath.cycles_current.value.integer}'
-#     pass
-
 @cocotb.test(skip='RVTEST_ALUBR' in os.environ)
 async def testLoadUse2(dut):
     "load to use in rs1"

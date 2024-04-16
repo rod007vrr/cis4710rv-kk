@@ -725,7 +725,7 @@ module DatapathPipelined (
         end
       end
       OpcodeJal: begin
-        m_we = 1'b0;
+        m_we = 1'b1;
         if (insn_jal) begin
           fd_new_pc = execute_state.pc + imm_j_sext;
           fd_clear_for_branch = 1'b1;
@@ -735,7 +735,7 @@ module DatapathPipelined (
         end
       end
       OpcodeJalr: begin
-        m_we = 1'b0;
+        m_we = 1'b1;
         if (insn_jalr) begin
           fd_new_pc = (m_bypass_a + imm_i_sext) & ~(32'h1);
           fd_clear_for_branch = 1'b1;
