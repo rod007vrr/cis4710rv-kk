@@ -200,6 +200,7 @@ module DatapathPipelined (
   logic [`REG_SIZE] fd_new_pc;  //set when we branch
 
   logic stall_for_load;
+  logic stall_for_fence;
 
   // program counter
   always_ff @(posedge clk) begin
@@ -211,7 +212,7 @@ module DatapathPipelined (
       f_cycle_status <= CYCLE_NO_STALL;
       if (fd_clear_for_branch) begin
         f_pc_current <= fd_new_pc;
-      end else if (stall_for_load) begin
+      end else if (stall_for_load || stall_for_fence) begin
         // f_cycle_status <= CYCLE_LOAD2USE;
         f_pc_current <= f_pc_current;
       end else begin
@@ -246,7 +247,7 @@ module DatapathPipelined (
     end else begin
       if (fd_clear_for_branch) begin
         decode_state <= '{pc: 0, insn: 0, cycle_status: CYCLE_TAKEN_BRANCH};
-      end else if (stall_for_load) begin
+      end else if (stall_for_load || stall_for_fence) begin
         decode_state <= decode_state;
       end else begin
         decode_state <= '{pc: f_pc_current, insn: f_insn, cycle_status: f_cycle_status};
@@ -263,6 +264,15 @@ module DatapathPipelined (
 
   // TODO: your code here, though you will also need to modify some of the code above
   // TODO: the testbench requires that your register file instance is named `rf`
+
+  always_comb begin
+    stall_for_fence = 1'b0;
+    if (decode_state.insn[6:0] == OpcodeMiscMem 
+    && (execute_state.insn[6:0] == OpcodeStore || memory_state.insn[6:0] == OpcodeStore)) begin
+      stall_for_fence = 1'b1;
+    end
+  end
+
 
   /*****************/
   /* EXECUTE STAGE */
@@ -341,6 +351,8 @@ module DatapathPipelined (
           };
         end else if (stall_for_load) begin
           execute_state <= '{pc: 0, a: 0, b: 0, insn: 0, cycle_status: CYCLE_LOAD2USE};
+        end else if (stall_for_fence) begin
+          execute_state <= '{pc: 0, a: 0, b: 0, insn: 0, cycle_status: CYCLE_FENCEI};
         end else begin
           execute_state <= '{
               pc: decode_state.pc,
@@ -558,6 +570,8 @@ module DatapathPipelined (
 
 
     stall_for_load = 1'b0;
+
+    // stall_for_fence = 1'b0;
 
     case (m_insn_opcode)
       OpcodeLui: begin
@@ -806,6 +820,15 @@ module DatapathPipelined (
         end else begin
           illegal_insn = 1'b1;
         end
+      end
+      OpcodeMiscMem: begin
+        // if (insn_fence) begin
+        //   if (memory_state.insn[6:0] == OpcodeStore) begin
+        //     stall_for_fence = 1'b1;
+        //   end
+        // end else begin
+        //   illegal_insn = 1'b1;
+        // end
       end
       default: begin
         m_we = 1'b0;
