@@ -720,7 +720,7 @@ module DatapathPipelined (
             )) begin
           stall_for_load = 1'b1;
         end
-        if (insn_lw) begin
+        if (insn_lb || insn_lh || insn_lw || insn_lbu || insn_lhu) begin
           m_output = m_bypass_a + imm_i_sext;
         end
       end
@@ -783,7 +783,17 @@ module DatapathPipelined (
       OpcodeEnviron: begin
         m_we = 1'b0;
         if (insn_ecall) begin
-          // halt = 1'b1;
+          // halt = 1'b1
+          // this is handled down the line
+        end else begin
+          illegal_insn = 1'b1;
+        end
+      end
+      OpcodeAuipc: begin
+        m_we = 1'b0;
+        if (insn_auipc) begin
+          m_output = execute_state.pc + {execute_state.insn[31:12], 12'd0};
+          m_we = 1'b1;
         end else begin
           illegal_insn = 1'b1;
         end
