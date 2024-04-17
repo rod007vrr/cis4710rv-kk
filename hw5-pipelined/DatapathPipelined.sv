@@ -109,6 +109,8 @@ typedef struct packed {
   logic [`REG_SIZE] pc;
   logic [`INSN_SIZE] insn;
   cycle_status_e cycle_status;
+  logic [`REG_SIZE] curr_cy;
+
 } stage_decode_t;
 
 typedef struct packed {
@@ -117,6 +119,7 @@ typedef struct packed {
   logic [`REG_SIZE] b;
   logic [`INSN_SIZE] insn;
   cycle_status_e cycle_status;
+  logic [`REG_SIZE] curr_cy;
 } stage_execute_t;
 
 typedef struct packed {
@@ -128,6 +131,14 @@ typedef struct packed {
   logic [3:0] data_we;
   logic illegal_insn;
   cycle_status_e cycle_status;
+  logic [`REG_SIZE] mba;
+  logic [`REG_SIZE] mbb;
+  logic [`REG_SIZE] mso;
+  logic [`REG_SIZE] wmw;
+  logic [`REG_SIZE] esa;
+  logic [`REG_SIZE] curr_cy;
+  logic [`REG_SIZE] to_mem;
+
 } stage_memory_t;
 
 typedef struct packed {
@@ -139,6 +150,8 @@ typedef struct packed {
   logic [`REG_SIZE] div_res;
   logic illegal_insn;
   cycle_status_e cycle_status;
+  logic [`REG_SIZE] curr_cy;
+  logic [4:0] insn_rd;
 } stage_writeback_t;
 
 
@@ -225,7 +238,7 @@ module DatapathPipelined (
   // send PC to imem
   assign pc_to_imem = f_pc_current;
 
-  assign f_insn = insn_from_imem;
+  assign f_insn = fd_clear_for_branch ? 0 : insn_from_imem;
 
   // Here's how to disassemble an insn into a string you can view in GtkWave.
   // Use PREFIX to provide a 1-character tag to identify which stage the insn comes from.
@@ -245,14 +258,19 @@ module DatapathPipelined (
   stage_decode_t decode_state;
   always_ff @(posedge clk) begin
     if (rst) begin
-      decode_state <= '{pc: 0, insn: 0, cycle_status: CYCLE_RESET};
+      decode_state <= '{pc: 0, insn: 0, cycle_status: CYCLE_RESET, curr_cy: 0};
     end else begin
       if (fd_clear_for_branch) begin
-        decode_state <= '{pc: 0, insn: 0, cycle_status: CYCLE_TAKEN_BRANCH};
+        decode_state <= '{pc: 0, insn: 0, cycle_status: CYCLE_TAKEN_BRANCH, curr_cy: 0};
       end else if (stall_for_load || stall_for_fence || stall_for_div) begin
         decode_state <= decode_state;
       end else begin
-        decode_state <= '{pc: f_pc_current, insn: f_insn, cycle_status: f_cycle_status};
+        decode_state <= '{
+            pc: f_pc_current,
+            insn: f_insn,
+            cycle_status: f_cycle_status,
+            curr_cy: cycles_current + 1
+        };
       end
     end
   end
@@ -266,6 +284,19 @@ module DatapathPipelined (
 
   // TODO: your code here, though you will also need to modify some of the code above
   // TODO: the testbench requires that your register file instance is named `rf`
+
+  always_comb begin
+    stall_for_load = 1'b0;
+    if (execute_state.insn[6:0] == OpcodeLoad) begin
+      if ((decode_state.insn[19:15] == execute_state.insn[11:7] && decode_state.insn[19:15] != 5'd0) ||
+          ((decode_state.insn[24:20] == execute_state.insn[11:7] && decode_state.insn[24:20] != 5'd0) &&
+          (decode_state.insn[6:0] != OpcodeStore) &&
+          (decode_state.insn[6:0] != OpcodeRegImm) &&
+          (decode_state.insn[6:0] != OpcodeLoad))) begin
+        stall_for_load = 1'b1;
+      end
+    end
+  end
 
   always_comb begin
     stall_for_fence = 1'b0;
@@ -332,14 +363,23 @@ module DatapathPipelined (
 
     //WD bypassing
     if (writeback_state.insn[11:7] == decode_state.insn[19:15] 
-        && writeback_state.insn[11:7] != 5'b0) begin
+        && writeback_state.insn[11:7] != 5'b0
+        && (writeback_state.insn[6:0] != OpcodeStore
+            && writeback_state.insn[6:0] != OpcodeBranch)
+        ) begin
       x_rs1_data = w_mux_writeback;
     end else begin
       x_rs1_data = rf_rs1_data;
     end
 
     if (writeback_state.insn[11:7] == decode_state.insn[24:20] 
-        && writeback_state.insn[11:7] != 5'b0) begin
+        && writeback_state.insn[11:7] != 5'b0
+        && (writeback_state.insn[6:0] != OpcodeStore
+            && writeback_state.insn[6:0] != OpcodeBranch)
+        && (decode_state.insn[6:0] == OpcodeRegReg 
+            || decode_state.insn[6:0] == OpcodeStore 
+            || decode_state.insn[6:0] == OpcodeBranch)
+        ) begin
       x_rs2_data = w_mux_writeback;
     end else begin
       x_rs2_data = rf_rs2_data;
@@ -350,30 +390,53 @@ module DatapathPipelined (
   stage_execute_t execute_state;
   always_ff @(posedge clk) begin
     if (rst) begin
-      execute_state <= '{pc: 0, insn: 0, a: 0, b: 0, cycle_status: CYCLE_RESET};
+      execute_state <= '{pc: 0, insn: 0, a: 0, b: 0, cycle_status: CYCLE_RESET, curr_cy: 0};
     end else begin
       begin
         if (fd_clear_for_branch) begin
           execute_state <= '{
-              pc: fd_new_pc,
+              pc: 0,
               a: 0,
               b: 0,
               insn: 0,
-              cycle_status: CYCLE_TAKEN_BRANCH
+              cycle_status: CYCLE_TAKEN_BRANCH,
+              curr_cy: 0
           };
         end else if (stall_for_load) begin
-          execute_state <= '{pc: 0, a: 0, b: 0, insn: 0, cycle_status: CYCLE_LOAD2USE};
+          execute_state <= '{
+              pc: 0,
+              a: 0,
+              b: 0,
+              insn: 0,
+              cycle_status: CYCLE_LOAD2USE,
+              curr_cy: 0
+          };
         end else if (stall_for_fence) begin
-          execute_state <= '{pc: 0, a: 0, b: 0, insn: 0, cycle_status: CYCLE_FENCEI};
+          execute_state <= '{
+              pc: 0,
+              a: 0,
+              b: 0,
+              insn: 0,
+              cycle_status: CYCLE_FENCEI,
+              curr_cy: 0
+          };
         end else if (stall_for_div) begin
-          execute_state <= '{pc: 0, a: 0, b: 0, insn: 0, cycle_status: CYCLE_DIV2USE};
+          execute_state <= '{
+              pc: 0,
+              a: 0,
+              b: 0,
+              insn: 0,
+              cycle_status: CYCLE_DIV2USE,
+              curr_cy: 0
+          };
         end else begin
           execute_state <= '{
               pc: decode_state.pc,
               a: x_rs1_data,
               b: x_rs2_data,
               insn: decode_state.insn,
-              cycle_status: decode_state.cycle_status
+              cycle_status: decode_state.cycle_status,
+              curr_cy: decode_state.curr_cy
           };
         end
       end
@@ -517,23 +580,22 @@ module DatapathPipelined (
   logic [3:0] m_data_we;
 
 
+
   always_comb begin
-    // the problem is here because its 0 initialized 
-
     // WX/MX BYPASSING
-
-
     if (memory_state.insn[11:7] == execute_state.insn[19:15] 
         && memory_state.insn[11:7] != 5'b0
         && memory_state.insn[6:0] != OpcodeStore
         && memory_state.insn[6:0] != OpcodeBranch
-        && memory_state.insn[6:0] !=  0'b1110011) begin
+        && memory_state.insn[6:0] !=  0'b1110011
+        && memory_state.we) begin
       m_bypass_a = memory_state.o;
     end else if (writeback_state.insn[11:7] == execute_state.insn[19:15] 
         && writeback_state.insn[11:7] != 5'b0
         && writeback_state.insn[6:0] != OpcodeStore
         && writeback_state.insn[6:0] != OpcodeBranch
-        && writeback_state.insn[6:0] !=  0'b1110011) begin
+        && writeback_state.insn[6:0] !=  0'b1110011
+        && writeback_state.we) begin
       m_bypass_a = w_mux_writeback;
     end else begin
       m_bypass_a = execute_state.a;
@@ -543,13 +605,24 @@ module DatapathPipelined (
         && memory_state.insn[11:7] != 5'b0
         && memory_state.insn[6:0] != OpcodeStore
         && memory_state.insn[6:0] != OpcodeBranch
-        && memory_state.insn[6:0] !=  0'b1110011) begin
+        && memory_state.insn[6:0] !=  0'b1110011
+        && memory_state.we
+        && (
+          execute_state.insn[6:0] == OpcodeRegReg
+          || execute_state.insn[6:0] == OpcodeStore
+          || execute_state.insn[6:0] == OpcodeBranch)) begin
       m_bypass_b = memory_state.o;
     end else if (writeback_state.insn[11:7] == execute_state.insn[24:20] 
         && writeback_state.insn[11:7] != 5'b0
         && writeback_state.insn[6:0] != OpcodeStore
         && writeback_state.insn[6:0] != OpcodeBranch
-        && writeback_state.insn[6:0] !=  0'b1110011) begin
+        && writeback_state.insn[6:0] !=  0'b1110011
+        && writeback_state.we
+        && (
+          execute_state.insn[6:0] == OpcodeRegReg
+          || execute_state.insn[6:0] == OpcodeStore
+          || execute_state.insn[6:0] == OpcodeBranch
+        )) begin
       m_bypass_b = w_mux_writeback;
     end else begin
       m_bypass_b = execute_state.b;
@@ -557,6 +630,8 @@ module DatapathPipelined (
 
 
   end
+
+  logic [`REG_SIZE] x_addr_to_mem;
 
   always_comb begin
 
@@ -582,8 +657,10 @@ module DatapathPipelined (
     m_we = 1'b0;
     m_data_we = 4'b0;
 
+    x_addr_to_mem = 32'd0;
 
-    stall_for_load = 1'b0;
+    // stall_for_load = 1'b0;
+
 
     // stall_for_fence = 1'b0;
 
@@ -722,20 +799,21 @@ module DatapathPipelined (
       end
       OpcodeLoad: begin
         m_we = 1'b1;
-        if (execute_state.insn[11:7] != 5'b0 
-            && (decode_state.insn[19:15] == execute_state.insn[11:7]
-            || (decode_state.insn[24:20] == execute_state.insn[11:7]
-                && (decode_state.insn[6:0] == 7'h33
-                  || decode_state.insn[6:0] == 7'h23
-                  || decode_state.insn[6:0] == 7'h63)))
-            && (decode_state.insn[6:0] != OpcodeStore
-            || (decode_state.insn[6:0] == OpcodeStore 
-            && decode_state.insn[24:20] == execute_state.insn[11:7])
-            )) begin
-          stall_for_load = 1'b1;
-        end
+        // if (execute_state.insn[11:7] != 5'b0 
+        //     && (decode_state.insn[19:15] == execute_state.insn[11:7]
+        //     || (decode_state.insn[24:20] == execute_state.insn[11:7]
+        //         && (decode_state.insn[6:0] == 7'h33
+        //           || decode_state.insn[6:0] == 7'h23
+        //           || decode_state.insn[6:0] == 7'h63)))
+        //     && (decode_state.insn[6:0] != OpcodeStore
+        //     || (decode_state.insn[6:0] == OpcodeStore 
+        //     && decode_state.insn[24:20] == execute_state.insn[11:7])
+        //     )) begin
+        //   stall_for_load = 1'b1;
+        // end
         if (insn_lb || insn_lh || insn_lw || insn_lbu || insn_lhu) begin
           m_output = m_bypass_a + imm_i_sext;
+          x_addr_to_mem = m_bypass_a + imm_i_sext;
         end
       end
       OpcodeJal: begin
@@ -814,6 +892,7 @@ module DatapathPipelined (
       end
       OpcodeStore: begin
         m_output = m_bypass_a + imm_s_sext;
+        x_addr_to_mem = m_bypass_a + imm_s_sext;
         if (insn_sb) begin
           case (m_output[1:0])
             2'b00: begin
@@ -874,7 +953,14 @@ module DatapathPipelined (
           we: 0,
           data_we: 0,
           illegal_insn: 0,
-          cycle_status: CYCLE_RESET
+          cycle_status: CYCLE_RESET,
+          mba: 0,
+          mbb: 0,
+          mso: 0,
+          wmw: 0,
+          esa: 0,
+          curr_cy: 0,
+          to_mem: 0
       };
     end else begin
       begin
@@ -888,7 +974,14 @@ module DatapathPipelined (
             we: m_we,
             data_we: m_data_we,
             illegal_insn: illegal_insn,
-            cycle_status: execute_state.cycle_status
+            cycle_status: execute_state.cycle_status,
+            mba: m_bypass_a,
+            mbb: m_bypass_b,
+            mso: memory_state.o,
+            wmw: w_mux_writeback,
+            esa: execute_state.a,
+            curr_cy: execute_state.curr_cy,
+            to_mem: x_addr_to_mem
         };
       end
     end
@@ -912,22 +1005,39 @@ module DatapathPipelined (
 
 
 
-  always_comb begin
-    // setting up right mem address
-    addr_ld = memory_state.o;
-    addr_to_dmem = {addr_ld[31:2], 2'b00};
-    // loading data from memory
-    w_loaded_data = load_data_from_dmem[31:0];
-  end
+  // always_comb begin
+  // setting up right mem address
+  // addr_ld = 0;
+  // addr_to_dmem = 0;
+  // w_loaded_data = 0;
+  // if (memory_state.insn[6:0] == OpcodeLoad) begin
+  assign addr_ld = memory_state.to_mem;
+  assign addr_to_dmem = {addr_ld[31:2], 2'b00};
+  // loading data from memory
+  assign w_loaded_data = load_data_from_dmem[31:0];
+  // end
+  // end
 
   logic [`REG_SIZE] w_bypass_mux_WM;
 
   always_comb begin
-    if (memory_state.insn[24:20] == writeback_state.insn[11:7] 
-        && memory_state.insn[24:20] != 5'b0) begin
-      w_bypass_mux_WM = w_mux_writeback;
-    end else begin
-      w_bypass_mux_WM = memory_state.b;
+    // if (memory_state.insn[24:20] == writeback_state.insn[11:7] 
+    //     && memory_state.insn[24:20] != 5'b0
+    //     && (
+    //       memory_state.insn[6:0] == OpcodeRegReg
+    //       || memory_state.insn[6:0] == OpcodeStore
+    //       || memory_state.insn[6:0] == OpcodeBranch
+    //       )) begin
+    //   w_bypass_mux_WM = w_mux_writeback;
+    // end else begin
+    //   w_bypass_mux_WM = memory_state.b;
+    // end
+    w_bypass_mux_WM = memory_state.b;
+    if (writeback_state.we) begin
+      if (writeback_state.insn[11:7] == memory_state.insn[24:20] 
+          && (writeback_state.insn[11:7] != 5'b0)) begin
+        w_bypass_mux_WM = w_mux_writeback;
+      end
     end
   end
 
@@ -999,7 +1109,9 @@ module DatapathPipelined (
           we: 0,
           div_res: 0,
           illegal_insn: 0,
-          cycle_status: CYCLE_RESET
+          cycle_status: CYCLE_RESET,
+          curr_cy: 0,
+          insn_rd: 0
       };
     end else begin
       begin
@@ -1011,11 +1123,21 @@ module DatapathPipelined (
             we: memory_state.we,
             div_res: w_divres,
             illegal_insn: memory_state.illegal_insn,
-            cycle_status: memory_state.cycle_status
+            cycle_status: memory_state.cycle_status,
+            curr_cy: memory_state.curr_cy,
+            insn_rd: memory_state.insn[11:7]
         };
       end
     end
   end
+
+  wire [255:0] w_disasm;
+  Disasm #(
+      .PREFIX("W")
+  ) disasm_1writeback (
+      .insn  (writeback_state.insn),
+      .disasm(w_disasm)
+  );
 
   // writing it all out
 
@@ -1024,6 +1146,8 @@ module DatapathPipelined (
     if (writeback_state.illegal_insn) begin
       trace_writeback_pc   = 0;
       trace_writeback_insn = 0;
+      // trace_writeback_pc   = writeback_state.pc;
+      // trace_writeback_insn = writeback_state.insn;
     end else begin
       trace_writeback_pc   = writeback_state.pc;
       trace_writeback_insn = writeback_state.insn;
@@ -1044,11 +1168,14 @@ module DatapathPipelined (
 
   logic [`REG_SIZE] w_mux_writeback;
 
+  logic [3:0] taken;
+
   always_comb begin
 
     if (writeback_state.insn[6:0] == 7'b0_000_011) begin
-      case (w_insn_funct3)
+      case (writeback_state.insn[14:12])
         3'b000: begin
+          taken = 4'd1;
           // lb
           case (writeback_state.o[1:0])
             2'b00: w_mux_writeback = {{24{writeback_state.d[7]}}, writeback_state.d[7:0]};
@@ -1058,6 +1185,7 @@ module DatapathPipelined (
           endcase
         end
         3'b001: begin
+          taken = 4'd2;
           // lh
           case (writeback_state.o[1])
             1'b0: w_mux_writeback = {{16{writeback_state.d[15]}}, writeback_state.d[15:0]};
@@ -1068,6 +1196,7 @@ module DatapathPipelined (
           w_mux_writeback = writeback_state.d;
         end
         3'b100: begin
+          taken = 4'd3;
           // lbu
           case (writeback_state.o[1:0])
             2'b00: w_mux_writeback = {24'b0, writeback_state.d[7:0]};
@@ -1077,6 +1206,7 @@ module DatapathPipelined (
           endcase
         end
         3'b101: begin
+          taken = 4'd4;
           // lhu
           case (writeback_state.o[1])
             1'b0: w_mux_writeback = {16'b0, writeback_state.d[15:0]};
@@ -1084,7 +1214,8 @@ module DatapathPipelined (
           endcase
         end
         default: begin
-          w_mux_writeback = 0;
+          taken = 4'd5;
+          w_mux_writeback = 32'b0;
         end
       endcase
     end else if (w_insn_opcode == OpcodeRegReg 
@@ -1093,8 +1224,10 @@ module DatapathPipelined (
         || w_insn_funct3 == 3'b110
         || w_insn_funct3 == 3'b111
         ) && w_insn_funct7 == 7'h01)) begin
+      taken = 4'd6;
       w_mux_writeback = writeback_state.div_res;
     end else begin
+      taken = 4'd7;
       w_mux_writeback = writeback_state.o;
     end
 
