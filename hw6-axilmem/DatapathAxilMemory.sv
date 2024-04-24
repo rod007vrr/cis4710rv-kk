@@ -52,6 +52,24 @@ module RegFile (
     input logic rst
 );
   // TODO: copy your RegFile code here
+  localparam int NumRegs = 32;
+  logic [`REG_SIZE] regs[NumRegs];
+  assign regs[0]  = 32'd0;
+  assign rs1_data = regs[rs1];
+  assign rs2_data = regs[rs2];
+  always_ff @(posedge clk) begin
+    if (rst) begin
+      for (int i = 1; i < NumRegs; i = i + 1) begin
+        regs[i] <= 32'd0;
+      end
+    end else begin
+      for (int i = 1; i < NumRegs; i = i + 1) begin
+        if (we && rd == i[4:0]) begin
+          regs[i] <= rd_data;
+        end
+      end
+    end
+  end
 
 endmodule
 
@@ -153,6 +171,8 @@ always_ff @(posedge axi.ACLK) begin
             if (insn.ARVALID && insn.ARREADY) begin
               insn.RDATA <= mem_array[insn.ARADDR[AddrMsb:AddrLsb]];
               insn.RVALID <= 1'b1;
+            end else begin
+              insn.RVALID <= 1'b0;
             end
 
             if (insn.RVALID && insn.RREADY) begin
@@ -164,6 +184,8 @@ always_ff @(posedge axi.ACLK) begin
             if (data.ARVALID && data.ARREADY) begin
               data.RDATA <= mem_array[data.ARADDR[AddrMsb:AddrLsb]];
               data.RVALID <= 1'b1;
+            end else begin
+              data.RVALID <= 1'b0;
             end
 
             if (data.RVALID && data.RREADY) begin
@@ -176,6 +198,8 @@ always_ff @(posedge axi.ACLK) begin
                 mem_array[data.AWADDR[AddrMsb:AddrLsb]] <= data.WDATA;
                 data.BRESP <= ResponseOkay;
                 data.BVALID <= 1'b1;
+            end else begin
+                data.BVALID <= 1'b0;
             end
         end
     end
@@ -308,7 +332,7 @@ typedef enum {
   /** a stall cycle that arose from a div/rem-to-use stall */
   CYCLE_DIV2USE = 16,
   /** a stall cycle that arose from a fence insn */
-  CYCLE_FENCE = 32
+  CYCLE_FENCEI = 32
 } cycle_status_e;
 
 /** state at the start of Decode stage */
@@ -366,16 +390,16 @@ module DatapathAxilMemory (
     input wire rst,
 
     // Start by replacing this interface to imem...
-    // output logic [`REG_SIZE] pc_to_imem,
-    // input wire [`INSN_SIZE] insn_from_imem,
+    //output logic [`REG_SIZE] pc_to_imem,
+    //input wire [`INSN_SIZE] insn_from_imem,
     // ...with this AXIL one.
     axi_if.manager imem,
 
     // Once imem is working, replace this interface to dmem...
-    // output logic [`REG_SIZE] addr_to_dmem,
-    // input wire [`REG_SIZE] load_data_from_dmem,
-    // output logic [`REG_SIZE] store_data_to_dmem,
-    // output logic [3:0] store_we_to_dmem,
+    //output logic [`REG_SIZE] addr_to_dmem,
+    //input wire [`REG_SIZE] load_data_from_dmem,
+    //output logic [`REG_SIZE] store_data_to_dmem,
+    //output logic [3:0] store_we_to_dmem,
     // ...with this AXIL one
     axi_if.manager dmem,
 
@@ -438,22 +462,41 @@ module DatapathAxilMemory (
       f_pc_current   <= 32'd0;
       // NB: use CYCLE_NO_STALL since this is the value that will persist after the last reset cycle
       f_cycle_status <= CYCLE_NO_STALL;
+      imem.ARVALID <= 1'b0;
+      imem.RREADY <= 1'b0;
     end else begin
       f_cycle_status <= CYCLE_NO_STALL;
+
+      if (!imem.ARVALID && (imem.ARREADY || !imem.ARVALID)) begin
+          imem.ARADDR <= f_pc_current;  
+          imem.ARVALID <= 1'b1;        
+      end
+
+      if (imem.RVALID) begin
+          imem.RREADY <= 1'b1;  
+      end
+
       if (fd_clear_for_branch) begin
         f_pc_current <= fd_new_pc;
-      end else if (stall_for_load || stall_for_fence || stall_for_div) begin
+      end else if (!stall_for_load && !stall_for_fence && !stall_for_div && imem.RVALID && imem.RREADY) begin
         // f_cycle_status <= CYCLE_LOAD2USE;
         f_pc_current <= f_pc_current;
       end else begin
         f_pc_current <= f_pc_current + 4;
       end
+
+      if (imem.RVALID && imem.RREADY) begin
+          imem.ARVALID <= 1'b0;  
+      end
+
     end
   end
-  // send PC to imem
-  assign pc_to_imem = f_pc_current;
 
-  assign f_insn = fd_clear_for_branch ? 0 : insn_from_imem;
+  // send PC to imem
+  //assign pc_to_imem = f_pc_current;
+
+  assign f_insn = imem.RVALID && imem.RREADY ? imem.RDATA : 32'b0;
+
 
   // Here's how to disassemble an insn into a string you can view in GtkWave.
   // Use PREFIX to provide a 1-character tag to identify which stage the insn comes from.
@@ -1217,23 +1260,30 @@ module DatapathAxilMemory (
   logic [`REG_SIZE] addr_ld;
 
 
-
-
-
-  // always_comb begin
-  // setting up right mem address
-  // addr_ld = 0;
-  // addr_to_dmem = 0;
-  // w_loaded_data = 0;
-  // if (memory_state.insn[6:0] == OpcodeLoad) begin
   assign addr_ld = memory_state.to_mem;
-  assign addr_to_dmem = {addr_ld[31:2], 2'b00};
-  // loading data from memory
-  assign w_loaded_data = load_data_from_dmem[31:0];
-  // end
-  // end
+  assign dmem.ARADDR = {addr_ld[31:2], 2'b00};  
+  assign dmem.ARVALID = (memory_state.insn[6:0] == OpcodeLoad);  
+  assign dmem.RREADY = 1'b1;  
+
+  //assign w_loaded_data = load_data_from_dmem[31:0];
+
+  always_ff @(posedge clk) begin
+    if (dmem.RVALID && dmem.RREADY) begin
+        w_loaded_data <= dmem.RDATA;  
+    end
+  end
 
   logic [`REG_SIZE] w_bypass_mux_WM;
+
+  always_comb begin
+    dmem.AWADDR = {addr_ld[31:2], 2'b00};  
+    dmem.AWVALID = (memory_state.insn[6:0] == OpcodeStore);  
+    dmem.WDATA = w_bypass_mux_WM;  
+    dmem.WVALID = (memory_state.data_we != 4'b0);  
+    dmem.WSTRB = memory_state.data_we;  
+    dmem.BREADY = 1'b1;  
+  end
+
 
   always_comb begin
     // if (memory_state.insn[24:20] == writeback_state.insn[11:7] 
@@ -1257,7 +1307,7 @@ module DatapathAxilMemory (
   end
 
   // memory write logic
-  begin
+  /* begin
     always_comb begin
       store_data_to_dmem = 32'b0;
       case (memory_state.data_we)
@@ -1288,7 +1338,7 @@ module DatapathAxilMemory (
       endcase
       store_we_to_dmem = memory_state.data_we;
     end
-  end
+  end */
 
   logic [`REG_SIZE] w_divres;
 
@@ -1584,6 +1634,7 @@ module RiscvProcessor (
       .trace_writeback_pc(trace_writeback_pc),
       .trace_writeback_insn(trace_writeback_insn),
       .trace_writeback_cycle_status(trace_writeback_cycle_status)
+
   );
 
 endmodule
