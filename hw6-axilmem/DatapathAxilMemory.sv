@@ -175,10 +175,6 @@ always_ff @(posedge axi.ACLK) begin
               insn.RVALID <= 1'b0;
             end
 
-            if (insn.RVALID && insn.RREADY) begin
-              insn.RDATA <= mem_array[insn.ARADDR[AddrMsb:AddrLsb]];
-            end
-
 
           // data read
             if (data.ARVALID && data.ARREADY) begin
@@ -188,16 +184,16 @@ always_ff @(posedge axi.ACLK) begin
               data.RVALID <= 1'b0;
             end
 
-            if (data.RVALID && data.RREADY) begin
-              data.RDATA <= mem_array[data.ARADDR[AddrMsb:AddrLsb]];
-            end
-
 
             // data write
             if (data.AWVALID && data.AWREADY && data.WVALID && data.WREADY) begin
-                mem_array[data.AWADDR[AddrMsb:AddrLsb]] <= data.WDATA;
-                data.BRESP <= ResponseOkay;
-                data.BVALID <= 1'b1;
+              for (int i = 0; i < 4; i++) begin
+                if (data.WSTRB[i]) begin
+                  mem_array[data.AWADDR[AddrMsb:AddrLsb]][8*i +: 8] <= data.WDATA[8*i +: 8];
+                end
+              end
+              data.BRESP <= ResponseOkay;
+              data.BVALID <= 1'b1;
             end else begin
                 data.BVALID <= 1'b0;
             end
@@ -446,7 +442,7 @@ module DatapathAxilMemory (
   /***************/
 
   logic [`REG_SIZE] f_pc_current;
-  wire [`REG_SIZE] f_insn;
+  logic [`REG_SIZE] f_insn;
   cycle_status_e f_cycle_status;
 
   logic fd_clear_for_branch;  // this is used when we clear the whole thing for branch
@@ -462,40 +458,41 @@ module DatapathAxilMemory (
       f_pc_current   <= 32'd0;
       // NB: use CYCLE_NO_STALL since this is the value that will persist after the last reset cycle
       f_cycle_status <= CYCLE_NO_STALL;
-      imem.ARVALID <= 1'b0;
-      imem.RREADY <= 1'b0;
+      
     end else begin
       f_cycle_status <= CYCLE_NO_STALL;
 
-      if (!imem.ARVALID && (imem.ARREADY || !imem.ARVALID)) begin
-          imem.ARADDR <= f_pc_current;  
-          imem.ARVALID <= 1'b1;        
-      end
-
-      if (imem.RVALID) begin
-          imem.RREADY <= 1'b1;  
-      end
-
       if (fd_clear_for_branch) begin
-        f_pc_current <= fd_new_pc;
-      end else if (!stall_for_load && !stall_for_fence && !stall_for_div && imem.RVALID && imem.RREADY) begin
-        // f_cycle_status <= CYCLE_LOAD2USE;
-        f_pc_current <= f_pc_current;
+        f_pc_current <= fd_new_pc;  // Jump to new PC on branch
+      end else if (stall_for_load || stall_for_fence || stall_for_div) begin
+        f_pc_current <= f_pc_current;  
       end else begin
         f_pc_current <= f_pc_current + 4;
       end
 
-      if (imem.RVALID && imem.RREADY) begin
-          imem.ARVALID <= 1'b0;  
-      end
+
 
     end
   end
+  
 
-  // send PC to imem
-  //assign pc_to_imem = f_pc_current;
+ always_comb begin
+      if (rst) begin
+        imem.ARVALID = 1'b0;
+      end
+    
+      imem.ARADDR = f_pc_current;  
+      imem.ARVALID = 1'b1; 
 
-  assign f_insn = imem.RVALID && imem.RREADY ? imem.RDATA : 32'b0;
+      if (stall_for_load || stall_for_fence || stall_for_div) begin
+          imem.ARVALID = 1'b0;        
+      end
+
+ end 
+
+
+
+ 
 
 
   // Here's how to disassemble an insn into a string you can view in GtkWave.
@@ -513,15 +510,36 @@ module DatapathAxilMemory (
   /****************/
 
   // this shows how to package up state in a `struct packed`, and how to pass it between stages
+  logic prev_stall;
+  logic prev_branch;
+  logic [`REG_SIZE] prev_insn;
   stage_decode_t decode_state;
+
+  always_comb begin
+    if (prev_stall) begin
+      assign f_insn = prev_insn;
+    end else 
+    if (prev_branch) begin
+      assign f_insn = 32'b0;
+    end else begin
+      assign f_insn = imem.RVALID ? imem.RDATA : 32'b0;
+    end 
+
+  end
+
+
+  assign prev_insn = imem.RDATA;
+
   always_ff @(posedge clk) begin
     if (rst) begin
       decode_state <= '{pc: 0, insn: 0, cycle_status: CYCLE_RESET, curr_cy: 0};
     end else begin
       if (fd_clear_for_branch) begin
+        prev_branch <= 1'b1;
         decode_state <= '{pc: 0, insn: 0, cycle_status: CYCLE_TAKEN_BRANCH, curr_cy: 0};
       end else if (stall_for_load || stall_for_fence || stall_for_div) begin
         decode_state <= decode_state;
+        prev_stall <= 1'b1;
       end else begin
         decode_state <= '{
             pc: f_pc_current,
@@ -529,6 +547,8 @@ module DatapathAxilMemory (
             cycle_status: f_cycle_status,
             curr_cy: cycles_current + 1
         };
+        prev_stall <= 1'b0;
+        prev_branch <= 1'b0;
       end
     end
   end
@@ -536,7 +556,7 @@ module DatapathAxilMemory (
   Disasm #(
       .PREFIX("D")
   ) disasm_1decode (
-      .insn  (decode_state.insn),
+      .insn  (f_insn),
       .disasm(d_disasm)
   );
 
@@ -546,11 +566,11 @@ module DatapathAxilMemory (
   always_comb begin
     stall_for_load = 1'b0;
     if (execute_state.insn[6:0] == OpcodeLoad) begin
-      if ((decode_state.insn[19:15] == execute_state.insn[11:7] && decode_state.insn[19:15] != 5'd0) ||
-          ((decode_state.insn[24:20] == execute_state.insn[11:7] && decode_state.insn[24:20] != 5'd0) &&
-          (decode_state.insn[6:0] != OpcodeStore) &&
-          (decode_state.insn[6:0] != OpcodeRegImm) &&
-          (decode_state.insn[6:0] != OpcodeLoad))) begin
+      if ((f_insn[19:15] == execute_state.insn[11:7] && f_insn[19:15] != 5'd0) ||
+          ((f_insn[24:20] == execute_state.insn[11:7] && f_insn[24:20] != 5'd0) &&
+          (f_insn[6:0] != OpcodeStore) &&
+          (f_insn[6:0] != OpcodeRegImm) &&
+          (f_insn[6:0] != OpcodeLoad))) begin
         stall_for_load = 1'b1;
       end
     end
@@ -558,7 +578,7 @@ module DatapathAxilMemory (
 
   always_comb begin
     stall_for_fence = 1'b0;
-    if (decode_state.insn[6:0] == OpcodeMiscMem 
+    if (f_insn[6:0] == OpcodeMiscMem 
     && (execute_state.insn[6:0] == OpcodeStore || memory_state.insn[6:0] == OpcodeStore)) begin
       stall_for_fence = 1'b1;
     end
@@ -567,8 +587,8 @@ module DatapathAxilMemory (
   always_comb begin
     stall_for_div = 1'b0;
     if (execute_state.insn[6:0] == OpcodeRegReg && execute_state.insn[31:25] == 7'd1) begin
-      if ((execute_state.insn[11:7] == decode_state.insn[19:15] && decode_state.insn[19:15] != 5'b0)
-      || (execute_state.insn[11:7] == decode_state.insn[24:20]&& decode_state.insn[24:20] != 5'b0)) begin
+      if ((execute_state.insn[11:7] == f_insn[19:15] && f_insn[19:15] != 5'b0)
+      || (execute_state.insn[11:7] == f_insn[24:20]&& f_insn[24:20] != 5'b0)) begin
         stall_for_div = 1'b1;
       end
     end
@@ -620,7 +640,7 @@ module DatapathAxilMemory (
     rf_rs2 = x_insn_rs2;
 
     //WD bypassing
-    if (writeback_state.insn[11:7] == decode_state.insn[19:15] 
+    if (writeback_state.insn[11:7] == f_insn[19:15] 
         && writeback_state.insn[11:7] != 5'b0
         && (writeback_state.insn[6:0] != OpcodeStore
             && writeback_state.insn[6:0] != OpcodeBranch)
@@ -630,13 +650,13 @@ module DatapathAxilMemory (
       x_rs1_data = rf_rs1_data;
     end
 
-    if (writeback_state.insn[11:7] == decode_state.insn[24:20] 
+    if (writeback_state.insn[11:7] == f_insn[24:20] 
         && writeback_state.insn[11:7] != 5'b0
         && (writeback_state.insn[6:0] != OpcodeStore
             && writeback_state.insn[6:0] != OpcodeBranch)
-        && (decode_state.insn[6:0] == OpcodeRegReg 
-            || decode_state.insn[6:0] == OpcodeStore 
-            || decode_state.insn[6:0] == OpcodeBranch)
+        && (f_insn[6:0] == OpcodeRegReg 
+            || f_insn[6:0] == OpcodeStore 
+            || f_insn[6:0] == OpcodeBranch)
         ) begin
       x_rs2_data = w_mux_writeback;
     end else begin
@@ -692,7 +712,7 @@ module DatapathAxilMemory (
               pc: decode_state.pc,
               a: x_rs1_data,
               b: x_rs2_data,
-              insn: decode_state.insn,
+              insn: f_insn,
               cycle_status: decode_state.cycle_status,
               curr_cy: decode_state.curr_cy
           };
@@ -1262,41 +1282,16 @@ module DatapathAxilMemory (
 
   assign addr_ld = memory_state.to_mem;
   assign dmem.ARADDR = {addr_ld[31:2], 2'b00};  
-  assign dmem.ARVALID = (memory_state.insn[6:0] == OpcodeLoad);  
-  assign dmem.RREADY = 1'b1;  
+  //assign dmem.ARVALID = (memory_state.insn[6:0] == OpcodeLoad);   
+  assign dmem.ARVALID = 1'b1;
 
   //assign w_loaded_data = load_data_from_dmem[31:0];
 
-  always_ff @(posedge clk) begin
-    if (dmem.RVALID && dmem.RREADY) begin
-        w_loaded_data <= dmem.RDATA;  
-    end
-  end
 
   logic [`REG_SIZE] w_bypass_mux_WM;
 
-  always_comb begin
-    dmem.AWADDR = {addr_ld[31:2], 2'b00};  
-    dmem.AWVALID = (memory_state.insn[6:0] == OpcodeStore);  
-    dmem.WDATA = w_bypass_mux_WM;  
-    dmem.WVALID = (memory_state.data_we != 4'b0);  
-    dmem.WSTRB = memory_state.data_we;  
-    dmem.BREADY = 1'b1;  
-  end
-
 
   always_comb begin
-    // if (memory_state.insn[24:20] == writeback_state.insn[11:7] 
-    //     && memory_state.insn[24:20] != 5'b0
-    //     && (
-    //       memory_state.insn[6:0] == OpcodeRegReg
-    //       || memory_state.insn[6:0] == OpcodeStore
-    //       || memory_state.insn[6:0] == OpcodeBranch
-    //       )) begin
-    //   w_bypass_mux_WM = w_mux_writeback;
-    // end else begin
-    //   w_bypass_mux_WM = memory_state.b;
-    // end
     w_bypass_mux_WM = memory_state.b;
     if (writeback_state.we) begin
       if (writeback_state.insn[11:7] == memory_state.insn[24:20] 
@@ -1304,6 +1299,14 @@ module DatapathAxilMemory (
         w_bypass_mux_WM = w_mux_writeback;
       end
     end
+  end
+
+  always_comb begin
+    dmem.AWADDR = {addr_ld[31:2], 2'b00};  
+    dmem.AWVALID = (memory_state.insn[6:0] == OpcodeStore);  
+    dmem.WDATA = w_bypass_mux_WM;  
+    dmem.WVALID = (memory_state.data_we != 4'b0);  
+    dmem.WSTRB = memory_state.data_we;  
   end
 
   // memory write logic
@@ -1364,6 +1367,14 @@ module DatapathAxilMemory (
   end
 
   stage_writeback_t writeback_state;
+
+  always_comb begin
+    w_loaded_data = 32'b0;
+    if (dmem.RVALID) begin
+        w_loaded_data = dmem.RDATA;  
+    end
+  end
+
   always_ff @(posedge clk) begin
     if (rst) begin
       writeback_state <= '{
