@@ -187,10 +187,17 @@ always_ff @(posedge axi.ACLK) begin
 
             // data write
             if (data.AWVALID && data.AWREADY && data.WVALID && data.WREADY) begin
-              for (int i = 0; i < 4; i++) begin
-                if (data.WSTRB[i]) begin
-                  mem_array[data.AWADDR[AddrMsb:AddrLsb]][8*i +: 8] <= data.WDATA[8*i +: 8];
-                end
+              if (data.WSTRB[0]) begin
+                mem_array[data.AWADDR[AddrMsb:AddrLsb]][7:0] <= data.WDATA[7:0];
+              end
+              if (data.WSTRB[1]) begin
+                mem_array[data.AWADDR[AddrMsb:AddrLsb]][15:8] <= data.WDATA[15:8];
+              end
+              if (data.WSTRB[2]) begin
+                mem_array[data.AWADDR[AddrMsb:AddrLsb]][23:16] <= data.WDATA[23:16];
+              end
+              if (data.WSTRB[3]) begin
+                mem_array[data.AWADDR[AddrMsb:AddrLsb]][31:24] <= data.WDATA[31:24];
               end
               data.BRESP <= ResponseOkay;
               data.BVALID <= 1'b1;
@@ -477,15 +484,16 @@ module DatapathAxilMemory (
   
 
  always_comb begin
+      imem.ARADDR = f_pc_current;  
       if (rst) begin
         imem.ARVALID = 1'b0;
-      end
+      end else begin
     
-      imem.ARADDR = f_pc_current;  
-      imem.ARVALID = 1'b1; 
+        imem.ARVALID = 1'b1; 
 
-      if (stall_for_load || stall_for_fence || stall_for_div) begin
-          imem.ARVALID = 1'b0;        
+        if (stall_for_load || stall_for_fence || stall_for_div) begin
+            imem.ARVALID = 1'b0;        
+        end
       end
 
  end 
@@ -629,7 +637,7 @@ module DatapathAxilMemory (
   wire [4:0] x_insn_rd;
   wire [`OPCODE_SIZE] x_insn_opcode;
 
-  assign {x_insn_funct7, x_insn_rs2, x_insn_rs1, x_insn_funct3, x_insn_rd, x_insn_opcode} = decode_state.insn;
+  assign {x_insn_funct7, x_insn_rs2, x_insn_rs1, x_insn_funct3, x_insn_rd, x_insn_opcode} = f_insn;
 
   // getting our outputs from memory
   logic [`REG_SIZE] x_rs1_data;
@@ -1077,18 +1085,7 @@ module DatapathAxilMemory (
       end
       OpcodeLoad: begin
         m_we = 1'b1;
-        // if (execute_state.insn[11:7] != 5'b0 
-        //     && (decode_state.insn[19:15] == execute_state.insn[11:7]
-        //     || (decode_state.insn[24:20] == execute_state.insn[11:7]
-        //         && (decode_state.insn[6:0] == 7'h33
-        //           || decode_state.insn[6:0] == 7'h23
-        //           || decode_state.insn[6:0] == 7'h63)))
-        //     && (decode_state.insn[6:0] != OpcodeStore
-        //     || (decode_state.insn[6:0] == OpcodeStore 
-        //     && decode_state.insn[24:20] == execute_state.insn[11:7])
-        //     )) begin
-        //   stall_for_load = 1'b1;
-        // end
+
         if (insn_lb || insn_lh || insn_lw || insn_lbu || insn_lhu) begin
           m_output = m_bypass_a + imm_i_sext;
           x_addr_to_mem = m_bypass_a + imm_i_sext;
@@ -1304,44 +1301,38 @@ module DatapathAxilMemory (
   always_comb begin
     dmem.AWADDR = {addr_ld[31:2], 2'b00};  
     dmem.AWVALID = (memory_state.insn[6:0] == OpcodeStore);  
-    dmem.WDATA = w_bypass_mux_WM;  
     dmem.WVALID = (memory_state.data_we != 4'b0);  
     dmem.WSTRB = memory_state.data_we;  
-  end
 
-  // memory write logic
-  /* begin
-    always_comb begin
-      store_data_to_dmem = 32'b0;
+      dmem.WDATA = 32'b0;
       case (memory_state.data_we)
         4'b0001: begin
-          store_data_to_dmem[7:0] = w_bypass_mux_WM[7:0];
+          dmem.WDATA[7:0] = w_bypass_mux_WM[7:0];
         end
         4'b0010: begin
-          store_data_to_dmem[15:8] = w_bypass_mux_WM[7:0];
+          dmem.WDATA[15:8] = w_bypass_mux_WM[7:0];
         end
         4'b0100: begin
-          store_data_to_dmem[23:16] = w_bypass_mux_WM[7:0];
+          dmem.WDATA[23:16] = w_bypass_mux_WM[7:0];
         end
         4'b1000: begin
-          store_data_to_dmem[31:24] = w_bypass_mux_WM[7:0];
+          dmem.WDATA[31:24] = w_bypass_mux_WM[7:0];
         end
         4'b0011: begin
-          store_data_to_dmem[15:0] = w_bypass_mux_WM[15:0];
+          dmem.WDATA[15:0] = w_bypass_mux_WM[15:0];
         end
         4'b1100: begin
-          store_data_to_dmem[31:16] = w_bypass_mux_WM[15:0];
+          dmem.WDATA[31:16] = w_bypass_mux_WM[15:0];
         end
         4'b1111: begin
-          store_data_to_dmem = w_bypass_mux_WM;
+          dmem.WDATA = w_bypass_mux_WM;
         end
         default: begin
-          store_data_to_dmem = 32'b0;
+          dmem.WDATA = 32'b0;
         end
       endcase
-      store_we_to_dmem = memory_state.data_we;
-    end
-  end */
+
+  end
 
   logic [`REG_SIZE] w_divres;
 
@@ -1454,39 +1445,39 @@ module DatapathAxilMemory (
           taken = 4'd1;
           // lb
           case (writeback_state.o[1:0])
-            2'b00: w_mux_writeback = {{24{writeback_state.d[7]}}, writeback_state.d[7:0]};
-            2'b01: w_mux_writeback = {{24{writeback_state.d[15]}}, writeback_state.d[15:8]};
-            2'b10: w_mux_writeback = {{24{writeback_state.d[23]}}, writeback_state.d[23:16]};
-            2'b11: w_mux_writeback = {{24{writeback_state.d[31]}}, writeback_state.d[31:24]};
+            2'b00: w_mux_writeback = {{24{w_loaded_data[7]}}, w_loaded_data[7:0]};
+            2'b01: w_mux_writeback = {{24{w_loaded_data[15]}}, w_loaded_data[15:8]};
+            2'b10: w_mux_writeback = {{24{w_loaded_data[23]}}, w_loaded_data[23:16]};
+            2'b11: w_mux_writeback = {{24{w_loaded_data[31]}}, w_loaded_data[31:24]};
           endcase
         end
         3'b001: begin
           taken = 4'd2;
           // lh
           case (writeback_state.o[1])
-            1'b0: w_mux_writeback = {{16{writeback_state.d[15]}}, writeback_state.d[15:0]};
-            1'b1: w_mux_writeback = {{16{writeback_state.d[31]}}, writeback_state.d[31:16]};
+            1'b0: w_mux_writeback = {{16{w_loaded_data[15]}}, w_loaded_data[15:0]};
+            1'b1: w_mux_writeback = {{16{w_loaded_data[31]}}, w_loaded_data[31:16]};
           endcase
         end
         3'b010: begin
-          w_mux_writeback = writeback_state.d;
+          w_mux_writeback = w_loaded_data;
         end
         3'b100: begin
           taken = 4'd3;
           // lbu
           case (writeback_state.o[1:0])
-            2'b00: w_mux_writeback = {24'b0, writeback_state.d[7:0]};
-            2'b01: w_mux_writeback = {24'b0, writeback_state.d[15:8]};
-            2'b10: w_mux_writeback = {24'b0, writeback_state.d[23:16]};
-            2'b11: w_mux_writeback = {24'b0, writeback_state.d[31:24]};
+            2'b00: w_mux_writeback = {24'b0, w_loaded_data[7:0]};
+            2'b01: w_mux_writeback = {24'b0, w_loaded_data[15:8]};
+            2'b10: w_mux_writeback = {24'b0, w_loaded_data[23:16]};
+            2'b11: w_mux_writeback = {24'b0, w_loaded_data[31:24]};
           endcase
         end
         3'b101: begin
           taken = 4'd4;
           // lhu
           case (writeback_state.o[1])
-            1'b0: w_mux_writeback = {16'b0, writeback_state.d[15:0]};
-            1'b1: w_mux_writeback = {16'b0, writeback_state.d[31:16]};
+            1'b0: w_mux_writeback = {16'b0, w_loaded_data[15:0]};
+            1'b1: w_mux_writeback = {16'b0, w_loaded_data[31:16]};
           endcase
         end
         default: begin
